@@ -1,0 +1,33 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Environment variables
+.env
+
+# Runtime data & caches
+cards.json
+data/
+temp_audio/
+*.ogg
+*.mp3
+*.wav
+*.db
+*.sqlite3
+
+# Pytest & coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/

@@ -1,0 +1,23 @@
+# Telegram Bot (v20+)
+python-telegram-bot>=21.0,<23.0
+
+# Local Audio Transcription (Whisper)
+openai-whisper>=20231117
+
+# Google Gemini LLM SDK
+google-genai>=1.0.0
+
+# Fuzzy String Matching
+thefuzz>=0.22.1
+rapidfuzz>=3.6.0
+python-Levenshtein>=0.25.0
+
+# HTTP Client & Data Validation
+requests>=2.31.0
+pydantic>=2.6.0
+python-dotenv>=1.0.1
+
+# Automated Testing
+pytest>=8.0.0
+pytest-asyncio>=0.23.5
+pytest-cov>=5.0.0
