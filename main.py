@@ -36,9 +36,10 @@ def bootstrap_application(config: AppConfig | None = None) -> MiskatonicTelegram
     configure_logging(cfg.log_level)
 
     logger.info(
-        "Initializing Miskatonic Scribe | Primary LLM: %s | Fallbacks: %s",
+        "Initializing Miskatonic Scribe | Primary LLM: %s | Fallbacks: %s | Allowed User IDs: %s",
         cfg.gemini.primary_model,
         cfg.gemini.fallback_models,
+        sorted(cfg.allowed_user_ids),
     )
 
     audio_storage = LocalAudioStorageManager(config=cfg.audio)
@@ -69,6 +70,7 @@ def bootstrap_application(config: AppConfig | None = None) -> MiskatonicTelegram
         audio_storage=audio_storage,
         pipeline=pipeline,
         collection_repo=collection_repo,
+        allowed_user_ids=cfg.allowed_user_ids,
     )
 
 

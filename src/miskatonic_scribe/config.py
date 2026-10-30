@@ -5,9 +5,23 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List
+from typing import FrozenSet, List
 
 from dotenv import load_dotenv
+
+
+def parse_allowed_user_ids(raw_value: str) -> FrozenSet[int]:
+    """Parse a comma-separated string of Telegram numeric user IDs into a FrozenSet[int]."""
+    ids: set[int] = set()
+    for part in raw_value.split(","):
+        cleaned = part.strip()
+        if not cleaned:
+            continue
+        try:
+            ids.add(int(cleaned))
+        except ValueError:
+            continue
+    return frozenset(ids)
 
 
 @dataclass(frozen=True)
@@ -104,6 +118,7 @@ class AppConfig:
     telegram_bot_token: str
     gemini: GeminiModelConfig
     audio: AudioMaintenanceConfig
+    allowed_user_ids: FrozenSet[int] = field(default_factory=lambda: frozenset({1725371455}))
     whisper_model_name: str = "base"
     whisper_device: str = "cpu"
     arkhamdb_cards_path: Path = Path("cards.json")
@@ -126,10 +141,14 @@ class AppConfig:
         except ValueError:
             threshold = 65
 
+        raw_allowed_ids = os.getenv("TELEGRAM_ALLOWED_USER_IDS", "1725371455")
+        allowed_user_ids = parse_allowed_user_ids(raw_allowed_ids)
+
         return cls(
             telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", "").strip(),
             gemini=GeminiModelConfig.from_env(),
             audio=AudioMaintenanceConfig.from_env(),
+            allowed_user_ids=allowed_user_ids,
             whisper_model_name=os.getenv("WHISPER_MODEL_NAME", "base").strip() or "base",
             whisper_device=os.getenv("WHISPER_DEVICE", "cpu").strip() or "cpu",
             arkhamdb_cards_path=Path(os.getenv("ARKHAMDB_CARDS_PATH", "cards.json")),

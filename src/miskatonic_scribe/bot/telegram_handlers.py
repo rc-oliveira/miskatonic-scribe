@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from typing import Dict, List
+from typing import Collection, Dict, FrozenSet, List, Optional
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -44,16 +44,55 @@ class MiskatonicTelegramBot:
         audio_storage: IAudioStorageManager,
         pipeline: CardRegistrationPipeline,
         collection_repo: IUserCollectionRepository,
+        allowed_user_ids: Optional[Collection[int]] = None,
         use_thread_pool: bool = True,
     ) -> None:
         self._audio_storage = audio_storage
         self._pipeline = pipeline
         self._collection_repo = collection_repo
+        self._allowed_user_ids: FrozenSet[int] = (
+            frozenset(allowed_user_ids)
+            if allowed_user_ids is not None
+            else frozenset({1725371455})
+        )
         self._use_thread_pool = use_thread_pool
+
+    def is_user_authorized(self, user_id: Optional[int]) -> bool:
+        """Return True only if user_id is present in the configured whitelist."""
+        if user_id is None:
+            return False
+        return user_id in self._allowed_user_ids
+
+    async def _ensure_authorized(self, update: Update) -> bool:
+        """Validate effective_user against whitelist; log and reply if unauthorized."""
+        user = update.effective_user
+        user_id = user.id if user else None
+        username = user.username if user else None
+
+        if self.is_user_authorized(user_id):
+            return True
+
+        logger.warning(
+            "Unauthorized access attempt blocked for user_id=%s (username=%s).",
+            user_id,
+            username,
+        )
+        if update.callback_query:
+            await update.callback_query.answer(
+                "⛔ Acesso negado. Usuário não autorizado.",
+                show_alert=True,
+            )
+        elif update.message:
+            await update.message.reply_text(
+                "⛔ Acesso negado. Seu usuário não está autorizado a utilizar este bot."
+            )
+        return False
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /start and /help commands."""
         if not update.message:
+            return
+        if not await self._ensure_authorized(update):
             return
         welcome_text = (
             "🐙 *Miskatonic Scribe - Arkham Horror LCG*\n\n"
@@ -70,6 +109,8 @@ class MiskatonicTelegramBot:
     async def collection_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /colecao command to display the user's persisted cards."""
         if not update.message or not update.effective_user:
+            return
+        if not await self._ensure_authorized(update):
             return
 
         user_id = update.effective_user.id
@@ -113,6 +154,8 @@ class MiskatonicTelegramBot:
     ) -> None:
         """Download voice/audio .ogg file, run pipeline, and ask user for confirmation."""
         if not update.message:
+            return
+        if not await self._ensure_authorized(update):
             return
 
         attachment = update.message.voice or update.message.audio
@@ -211,6 +254,8 @@ class MiskatonicTelegramBot:
         """Process inline button callback (Confirmar / Cancelar)."""
         query = update.callback_query
         if query is None or not query.data:
+            return
+        if not await self._ensure_authorized(update):
             return
 
         await query.answer()
