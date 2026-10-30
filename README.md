@@ -43,11 +43,38 @@ Edite o arquivo `.env` com suas chaves `TELEGRAM_BOT_TOKEN` e `GEMINI_API_KEY`.
 
 ---
 
-## ▶️ Execução
+## ▶️ Execução Local
 
 ```bash
 python main.py
 ```
+
+---
+
+## 🐳 Deploy com Docker (Otimizado para Oracle Cloud Always Free)
+
+O projeto já inclui `Dockerfile` e `docker-compose.yml` prontos para produção:
+- **`ffmpeg` integrado** na imagem Debian Bookworm Slim.
+- **PyTorch CPU-only** pré-instalado (reduz a imagem em ~2.5 GB ao evitar pacotes NVIDIA CUDA desnecessários e suporta tanto instâncias **ARM64 Ampere A1** quanto **x86_64 AMD Micro** da Oracle Cloud).
+- **Volumes persistentes** para o cache do modelo Whisper (`~140 MB`), a base `cards.json` do ArkhamDB e as coleções salvas dos usuários (`user_collections.json`).
+
+```bash
+# 1. Clonar o repositório no servidor da Oracle Cloud
+git clone https://github.com/rc-oliveira/miskatonic-scribe.git
+cd miskatonic-scribe
+
+# 2. Configurar as variáveis de ambiente
+cp .env.example .env
+nano .env  # Preencha TELEGRAM_BOT_TOKEN e GEMINI_API_KEY
+
+# 3. Subir o container em background com auto-restart
+docker compose up -d --build
+
+# 4. Acompanhar os logs em tempo real
+docker compose logs -f
+```
+
+---
 
 ## 🧪 Testes Automatizados
 

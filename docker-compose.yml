@@ -1,0 +1,24 @@
+services:
+  miskatonic-scribe:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: miskatonic-scribe
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - ARKHAMDB_CARDS_PATH=/app/data/cards.json
+      - USER_COLLECTION_DB_PATH=/app/data/user_collections.json
+      - AUDIO_STORAGE_DIR=/app/temp_audio
+      - WHISPER_DEVICE=cpu
+    volumes:
+      # Persists cards.json and user_collections.json on host
+      - ./data:/app/data
+      # Temporary audio folder managed by the 5-file / X-days cleanup routine
+      - ./temp_audio:/app/temp_audio
+      # Caches the Whisper 'base' model (~140MB) across container rebuilds
+      - whisper_cache:/home/scribe/.cache/whisper
+
+volumes:
+  whisper_cache:
