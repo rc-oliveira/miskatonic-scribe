@@ -16,6 +16,7 @@ from miskatonic_scribe.bot.telegram_handlers import (
     build_telegram_application,
 )
 from miskatonic_scribe.config import AppConfig
+from miskatonic_scribe.infrastructure.arkhamdb_deck_exporter import ArkhamDBDeckExporter
 from miskatonic_scribe.infrastructure.arkhamdb_repository import ArkhamDBCardRepository
 from miskatonic_scribe.infrastructure.audio_storage import LocalAudioStorageManager
 from miskatonic_scribe.infrastructure.gemini_extractor import GeminiCardIntentExtractor
@@ -36,8 +37,9 @@ def bootstrap_application(config: AppConfig | None = None) -> MiskatonicTelegram
     configure_logging(level=cfg.log_level, log_file_path=cfg.log_file_path)
 
     logger.info(
-        "Initializing Miskatonic Scribe | Primary LLM: %s | Fallbacks: %s | Allowed User IDs: %s | "
-        "Telegram Timeouts (connect=%.1fs, read=%.1fs, retries=%d) | Log File: %s",
+        "Initializing Miskatonic Scribe | Mode: %s | Primary LLM: %s | Fallbacks: %s | "
+        "Allowed User IDs: %s | Telegram Timeouts (connect=%.1fs, read=%.1fs, retries=%d) | Log File: %s",
+        cfg.transcription_mode,
         cfg.gemini.primary_model,
         cfg.gemini.fallback_models,
         sorted(cfg.allowed_user_ids),
@@ -69,14 +71,21 @@ def bootstrap_application(config: AppConfig | None = None) -> MiskatonicTelegram
         transcriber=transcriber,
         extractor=extractor,
         matcher=matcher,
+        transcription_mode=cfg.transcription_mode,
     )
     collection_repo = JsonUserCollectionRepository(db_path=cfg.user_collection_db_path)
+    deck_exporter = ArkhamDBDeckExporter(
+        username=cfg.arkhamdb_username,
+        password=cfg.arkhamdb_password,
+        access_token=cfg.arkhamdb_access_token,
+    )
 
     return MiskatonicTelegramBot(
         audio_storage=audio_storage,
         pipeline=pipeline,
         collection_repo=collection_repo,
         card_repo=card_repository,
+        deck_exporter=deck_exporter,
         allowed_user_ids=cfg.allowed_user_ids,
         connect_timeout=cfg.telegram_connect_timeout,
         read_timeout=cfg.telegram_read_timeout,
@@ -95,7 +104,7 @@ def main() -> None:
         connect_timeout=cfg.telegram_connect_timeout,
         read_timeout=cfg.telegram_read_timeout,
     )
-    logger.info("Miskatonic Scribe Bot is now listening for voice/audio messages...")
+    logger.info("Miskatonic Scribe Bot is now listening for voice, audio, and text messages...")
     app.run_polling(drop_pending_updates=True)
 
 

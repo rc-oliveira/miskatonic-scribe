@@ -11,8 +11,19 @@ import pytest
 
 @pytest.fixture
 def sample_arkhamdb_payload() -> List[dict[str, Any]]:
-    """Representative ArkhamDB cards payload including XP levels, reprints, and subtitles."""
+    """Representative ArkhamDB cards payload including investigators, XP levels, reprints, and subtitles."""
     return [
+        {
+            "code": "05004",
+            "name": "Diana Stanley",
+            "real_name": "Diana Stanley",
+            "subname": "The Redeemed Cultist",
+            "xp": 0,
+            "pack_code": "tcu",
+            "faction_code": "mystic",
+            "type_code": "investigator",
+            "octgn_id": "diana-guid-05004",
+        },
         {
             "code": "01020",
             "name": "Facão",
@@ -21,6 +32,7 @@ def sample_arkhamdb_payload() -> List[dict[str, Any]]:
             "pack_code": "core",
             "faction_code": "guardian",
             "type_code": "asset",
+            "octgn_id": "machete-guid-01020",
         },
         {
             "code": "01520",
@@ -40,6 +52,7 @@ def sample_arkhamdb_payload() -> List[dict[str, Any]]:
             "pack_code": "core",
             "faction_code": "mystic",
             "type_code": "asset",
+            "octgn_id": "shrivelling-guid-01060",
         },
         {
             "code": "01560",
@@ -59,6 +72,7 @@ def sample_arkhamdb_payload() -> List[dict[str, Any]]:
             "pack_code": "dwl",
             "faction_code": "mystic",
             "type_code": "asset",
+            "octgn_id": "shrivelling-guid-02066",
         },
         {
             "code": "03306",
@@ -68,6 +82,51 @@ def sample_arkhamdb_payload() -> List[dict[str, Any]]:
             "pack_code": "ptc",
             "faction_code": "mystic",
             "type_code": "asset",
+        },
+        {
+            "code": "03034",
+            "name": "Astral Travel",
+            "real_name": "Astral Travel",
+            "xp": 0,
+            "pack_code": "ptc",
+            "faction_code": "mystic",
+            "type_code": "event",
+        },
+        {
+            "code": "02107",
+            "name": "Foi só um arranhão...",
+            "real_name": "I've had worse…",
+            "xp": 4,
+            "pack_code": "dwl",
+            "faction_code": "guardian",
+            "type_code": "event",
+        },
+        {
+            "code": "02261",
+            "name": "Foi só um arranhão...",
+            "real_name": "I've had worse…",
+            "xp": 2,
+            "pack_code": "dwl",
+            "faction_code": "guardian",
+            "type_code": "event",
+        },
+        {
+            "code": "60112",
+            "name": "Counterpunch",
+            "real_name": "Counterpunch",
+            "xp": 0,
+            "pack_code": "nat",
+            "faction_code": "guardian",
+            "type_code": "event",
+        },
+        {
+            "code": "04110",
+            "name": "Contramágica",
+            "real_name": "Counterspell",
+            "xp": 2,
+            "pack_code": "tfa",
+            "faction_code": "mystic",
+            "type_code": "event",
         },
         {
             "code": "01033",

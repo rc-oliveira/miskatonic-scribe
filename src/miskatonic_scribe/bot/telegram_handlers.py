@@ -1,14 +1,17 @@
-"""Telegram Bot v20+ handlers for voice/audio messages, retries, logging, and confirmation callbacks."""
+"""Telegram Bot v20+ handlers for voice, audio, text messages, .dek export, and ArkhamDB publishing."""
 
 from __future__ import annotations
 
 import asyncio
 import inspect
+import io
 import logging
+import re
 import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Collection, Dict, FrozenSet, List, Optional
+from typing import Any, Callable, Collection, Dict, FrozenSet, List, Optional, Union
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -34,14 +37,24 @@ from miskatonic_scribe.domain.interfaces import (
     ICardRepository,
     IUserCollectionRepository,
 )
-from miskatonic_scribe.domain.models import CardMatchResult, PipelineExecutionResult
+from miskatonic_scribe.domain.models import (
+    CardMatchResult,
+    InvestigatorMatchResult,
+    PipelineExecutionResult,
+)
+from miskatonic_scribe.infrastructure.arkhamdb_deck_exporter import (
+    ArkhamDBDeckExporter,
+    ArkhamDBPublishError,
+)
 from miskatonic_scribe.services.registration_pipeline import CardRegistrationPipeline
 
 logger = logging.getLogger(__name__)
 
+PendingBatchItem = Union[PipelineExecutionResult, List[CardMatchResult]]
+
 
 class MiskatonicTelegramBot:
-    """Telegram Bot controller encapsulating message, audio download retry, and callback handlers."""
+    """Telegram Bot controller encapsulating voice, text, confirmation, and ArkhamDB export handlers."""
 
     def __init__(
         self,
@@ -49,6 +62,7 @@ class MiskatonicTelegramBot:
         pipeline: CardRegistrationPipeline,
         collection_repo: IUserCollectionRepository,
         card_repo: Optional[ICardRepository] = None,
+        deck_exporter: Optional[ArkhamDBDeckExporter] = None,
         allowed_user_ids: Optional[Collection[int]] = None,
         connect_timeout: float = 30.0,
         read_timeout: float = 60.0,
@@ -61,6 +75,7 @@ class MiskatonicTelegramBot:
         self._pipeline = pipeline
         self._collection_repo = collection_repo
         self._card_repo = card_repo
+        self._deck_exporter = deck_exporter or ArkhamDBDeckExporter()
         self._allowed_user_ids: FrozenSet[int] = (
             frozenset(allowed_user_ids)
             if allowed_user_ids is not None
@@ -112,10 +127,12 @@ class MiskatonicTelegramBot:
             return
         welcome_text = (
             "🐙 *Miskatonic Scribe - Arkham Horror LCG*\n\n"
-            "Envie uma *mensagem de voz* ou *arquivo de áudio* dizendo as cartas "
-            "(em Português ou Inglês) e seus respectivos níveis (XP) e quantidades.\n\n"
-            "Exemplo de áudio:\n"
-            "_'Coloca duas cópias de Definhar nível 3 e dois Machetes nível 0'_\n\n"
+            "Envie uma *mensagem de voz*, *arquivo de áudio* ou *mensagem de texto* dizendo "
+            "o investigador e as cartas (em Português ou Inglês), seus níveis (XP) e quantidades.\n\n"
+            "Exemplo:\n"
+            "_'Deck da Diana Stanley: duas cópias de Definhar nível 3 e dois Foi só um arranhão'_\n\n"
+            "💡 Enquanto uma lista estiver aguardando confirmação, você também pode enviar um texto "
+            "(ex: _'trocar Astral Travel por 2 Foi só um arranhão'_) para corrigir o lote!\n\n"
             "Comandos disponíveis:\n"
             "• `/start` - Exibe esta mensagem de ajuda\n"
             "• `/colecao` - Lista as cartas já confirmadas e salvas na sua coleção\n"
@@ -190,7 +207,7 @@ class MiskatonicTelegramBot:
 
         if not cards:
             await update.message.reply_text(
-                "📭 Sua coleção ainda está vazia. Envie um áudio para registrar cartas!"
+                "📭 Sua coleção ainda está vazia. Envie um áudio ou texto para registrar cartas!"
             )
             return
 
@@ -204,16 +221,40 @@ class MiskatonicTelegramBot:
 
     @staticmethod
     def format_confirmation_message(result: PipelineExecutionResult) -> str:
-        """Build the Telegram response listing understood transcription and matched cards."""
+        """Build the Telegram response listing understood transcription, investigator, and matched cards."""
         lines: List[str] = [
-            f"🎙️ *Transcrição:* _{result.transcribed_text}_\n",
-            "🃏 *Cartas Identificadas:*",
+            f"🎙️ *Entrada:* _{result.transcribed_text}_\n",
         ]
+        if result.investigator_match is not None:
+            lines.append(f"{result.investigator_match.format_telegram_line()}\n")
+
+        total_copies = sum(m.intent.quantidade for m in result.match_results if m.matched)
+        lines.append(
+            f"🃏 *Cartas Identificadas ({total_copies} cópia(s) / {len(result.match_results)} entrada(s)):*"
+        )
         for match in result.match_results:
             lines.append(f"• {match.format_telegram_line()}")
 
-        lines.append("\nDeseja confirmar o registro destas cartas?")
+        lines.append(
+            "\n💡 _Envie uma mensagem de texto se quiser adicionar, remover ou trocar alguma carta antes de confirmar._"
+        )
+        lines.append("Deseja confirmar o registro destas cartas?")
         return "\n".join(lines)
+
+    @staticmethod
+    def _build_confirmation_keyboard(batch_id: str) -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        "✅ Confirmar", callback_data=f"confirm:{batch_id}"
+                    ),
+                    InlineKeyboardButton(
+                        "❌ Cancelar", callback_data=f"cancel:{batch_id}"
+                    ),
+                ]
+            ]
+        )
 
     async def _download_telegram_audio(
         self,
@@ -252,7 +293,6 @@ class MiskatonicTelegramBot:
                         connect_timeout=self._connect_timeout,
                     )
                 except TypeError:
-                    # Fallback for test mocks that do not accept timeout kwargs
                     telegram_file = await attachment.get_file()
 
                 try:
@@ -332,7 +372,6 @@ class MiskatonicTelegramBot:
             "⏳ Baixando áudio e consultando os arquivos da Universidade Miskatonic..."
         )
 
-        # Step 1: Prepare local .ogg path (runs automatic 5-file / X-days cleanup routine)
         try:
             local_audio_path = self._audio_storage.prepare_audio_path(
                 file_unique_id=attachment.file_unique_id,
@@ -354,7 +393,6 @@ class MiskatonicTelegramBot:
             )
             return
 
-        # Step 2: Run Transcription -> Gemini -> Fuzzy Matching
         try:
             if self._use_thread_pool:
                 pipeline_result = await asyncio.to_thread(
@@ -384,7 +422,7 @@ class MiskatonicTelegramBot:
             await status_msg.edit_text(f"❌ Erro inesperado ao processar o áudio: {exc}")
             return
 
-        if not pipeline_result.match_results:
+        if not pipeline_result.match_results and pipeline_result.investigator_match is None:
             await status_msg.edit_text(
                 f"🎙️ *Transcrição:* _{pipeline_result.transcribed_text}_\n\n"
                 "⚠️ Nenhuma carta de Arkham Horror LCG foi identificada na sua mensagem.",
@@ -392,39 +430,111 @@ class MiskatonicTelegramBot:
             )
             return
 
-        # Step 3: Store pending batch in user_data and ask for confirmation
         batch_id = uuid.uuid4().hex[:10]
-        pending_batches: Dict[str, List[CardMatchResult]] = context.user_data.setdefault(
+        pending_batches: Dict[str, PendingBatchItem] = context.user_data.setdefault(
             "pending_batches", {}
         )
-        pending_batches[batch_id] = pipeline_result.match_results
-
-        keyboard = InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton(
-                        "✅ Confirmar", callback_data=f"confirm:{batch_id}"
-                    ),
-                    InlineKeyboardButton(
-                        "❌ Cancelar", callback_data=f"cancel:{batch_id}"
-                    ),
-                ]
-            ]
-        )
+        pending_batches[batch_id] = pipeline_result
+        context.user_data["active_batch_id"] = batch_id
 
         response_text = self.format_confirmation_message(pipeline_result)
         await status_msg.edit_text(
             response_text,
             parse_mode="Markdown",
-            reply_markup=keyboard,
+            reply_markup=self._build_confirmation_keyboard(batch_id),
         )
+
+    async def handle_text_message(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+    ) -> None:
+        """Process text messages to either edit an active pending batch or create a new card batch."""
+        if not update.message or not update.message.text:
+            return
+        if not await self._ensure_authorized(update):
+            return
+
+        user_id = update.effective_user.id if update.effective_user else None
+        raw_text = update.message.text.strip()
+        if not raw_text:
+            return
+
+        status_msg = await update.message.reply_text("⏳ Processando mensagem de texto...")
+
+        try:
+            if self._use_thread_pool:
+                delta_result = await asyncio.to_thread(self._pipeline.process_text, raw_text)
+            else:
+                delta_result = self._pipeline.process_text(raw_text)
+        except LLMExtractionError as exc:
+            logger.error("LLMExtractionError on text message for user_id=%s: %s", user_id, exc, exc_info=True)
+            await status_msg.edit_text(f"🤖 Falha ao processar texto via Gemini: {exc}")
+            return
+        except MiskatonicScribeError as exc:
+            logger.error("MiskatonicScribeError on text message for user_id=%s: %s", user_id, exc, exc_info=True)
+            await status_msg.edit_text(f"❌ Erro no processamento: {exc}")
+            return
+        except Exception as exc:
+            logger.exception("Unexpected error in text pipeline for user_id=%s: %s", user_id, exc)
+            await status_msg.edit_text(f"❌ Erro inesperado ao processar texto: {exc}")
+            return
+
+        pending_batches: Dict[str, PendingBatchItem] = context.user_data.setdefault(
+            "pending_batches", {}
+        )
+        active_batch_id: Optional[str] = context.user_data.get("active_batch_id")
+
+        if active_batch_id and active_batch_id in pending_batches:
+            existing_item = pending_batches.pop(active_batch_id)
+            if isinstance(existing_item, list):
+                existing_result = PipelineExecutionResult(
+                    transcribed_text="",
+                    model_used=delta_result.model_used,
+                    extracted_intents=[m.intent for m in existing_item],
+                    match_results=existing_item,
+                )
+            else:
+                existing_result = existing_item
+
+            final_result = CardRegistrationPipeline.merge_pending_result(
+                current=existing_result,
+                delta=delta_result,
+            )
+        else:
+            final_result = delta_result
+
+        if not final_result.match_results and final_result.investigator_match is None:
+            await status_msg.edit_text(
+                "⚠️ Nenhuma carta ou investigador foi identificado na mensagem de texto."
+            )
+            return
+
+        new_batch_id = uuid.uuid4().hex[:10]
+        pending_batches[new_batch_id] = final_result
+        context.user_data["active_batch_id"] = new_batch_id
+
+        response_text = self.format_confirmation_message(final_result)
+        await status_msg.edit_text(
+            response_text,
+            parse_mode="Markdown",
+            reply_markup=self._build_confirmation_keyboard(new_batch_id),
+        )
+
+    @staticmethod
+    def _unpack_pending_item(
+        item: PendingBatchItem,
+    ) -> tuple[List[CardMatchResult], Optional[InvestigatorMatchResult]]:
+        if isinstance(item, PipelineExecutionResult):
+            return item.match_results, item.investigator_match
+        return list(item), None
 
     async def handle_confirmation_callback(
         self,
         update: Update,
         context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
-        """Process inline button callback (Confirmar / Cancelar)."""
+        """Process inline button callback (Confirmar / Cancelar), export .dek, and optionally publish to ArkhamDB."""
         query = update.callback_query
         if query is None or not query.data:
             return
@@ -433,12 +543,14 @@ class MiskatonicTelegramBot:
 
         await query.answer()
         action, _, batch_id = query.data.partition(":")
-        pending_batches: Dict[str, List[CardMatchResult]] = context.user_data.get(
+        pending_batches: Dict[str, PendingBatchItem] = context.user_data.get(
             "pending_batches", {}
         )
-        matches = pending_batches.pop(batch_id, None)
+        pending_item = pending_batches.pop(batch_id, None)
+        if context.user_data.get("active_batch_id") == batch_id:
+            context.user_data.pop("active_batch_id", None)
 
-        if matches is None:
+        if pending_item is None:
             await query.edit_message_text(
                 "⚠️ Esta solicitação de confirmação já expirou ou já foi processada."
             )
@@ -449,11 +561,20 @@ class MiskatonicTelegramBot:
             return
 
         if action == "confirm":
+            matches, investigator = self._unpack_pending_item(pending_item)
             user = update.effective_user
             user_id = user.id if user else 0
             username = user.username if user else None
 
             try:
+                total_copies = self._collection_repo.register_cards(
+                    user_id=user_id,
+                    username=username,
+                    matches=matches,
+                    investigator=investigator,
+                )
+            except TypeError:
+                # Backward compatibility for custom repositories with 3-arg signature
                 total_copies = self._collection_repo.register_cards(
                     user_id=user_id,
                     username=username,
@@ -473,16 +594,76 @@ class MiskatonicTelegramBot:
 
             summary_parts = [
                 f"✅ *Registro Confirmado!* ({total_copies} cópia(s) adicionada(s))\n",
-                *confirmed_lines,
             ]
+            if investigator is not None:
+                summary_parts.append(f"{investigator.format_telegram_line()}\n")
+            summary_parts.extend(confirmed_lines)
+
             if unmatched_lines:
                 summary_parts.append("\n⚠️ *Ignoradas (não encontradas):*")
                 summary_parts.extend(unmatched_lines)
+
+            inv_label = (
+                investigator.official_name
+                if (investigator and investigator.matched and investigator.official_name)
+                else "Investigator"
+            )
+            date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            deck_name = f"Miskatonic Scribe - {inv_label} ({date_str})"
+
+            # Optional direct publication to ArkhamDB if credentials are configured in .env
+            if self._deck_exporter.has_credentials and confirmed_lines:
+                try:
+                    if self._use_thread_pool:
+                        deck_url = await asyncio.to_thread(
+                            self._deck_exporter.publish_deck,
+                            deck_name,
+                            matches,
+                            investigator,
+                        )
+                    else:
+                        deck_url = self._deck_exporter.publish_deck(
+                            deck_name,
+                            matches,
+                            investigator,
+                        )
+                    summary_parts.append(f"\n🌐 *Deck criado no ArkhamDB:* {deck_url}")
+                except ArkhamDBPublishError as exc:
+                    logger.warning("ArkhamDB direct publish failed: %s", exc)
+                    summary_parts.append(f"\n⚠️ *Aviso ArkhamDB:* {exc}")
 
             await query.edit_message_text(
                 "\n".join(summary_parts),
                 parse_mode="Markdown",
             )
+
+            # Generate and send .dek (OCTGN XML) file for 1-click import on https://arkhamdb.com/decks
+            if confirmed_lines and getattr(query, "message", None) is not None:
+                reply_doc = getattr(query.message, "reply_document", None)
+                if callable(reply_doc):
+                    try:
+                        dek_content = self._deck_exporter.generate_octgn_dek(
+                            deck_name=deck_name,
+                            matches=matches,
+                            investigator=investigator,
+                        )
+                        slug = re.sub(r"[^a-z0-9]+", "_", inv_label.lower()).strip("_") or "arkham"
+                        filename = f"deck_{slug}_{date_str}.dek"
+                        bio = io.BytesIO(dek_content.encode("utf-8"))
+                        bio.name = filename
+                        res = reply_doc(
+                            document=bio,
+                            filename=filename,
+                            caption=(
+                                "📦 Arquivo `.dek` gerado! Você pode importá-lo diretamente em "
+                                "https://arkhamdb.com/decks clicando em *Import Deck*."
+                            ),
+                            parse_mode="Markdown",
+                        )
+                        if inspect.isawaitable(res):
+                            await res
+                    except Exception as exc:
+                        logger.warning("Could not send .dek attachment in Telegram: %s", exc)
 
     async def global_error_handler(
         self,
@@ -533,6 +714,9 @@ def build_telegram_application(
     )
     application.add_handler(
         MessageHandler(filters.VOICE | filters.AUDIO, controller.handle_voice_or_audio)
+    )
+    application.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, controller.handle_text_message)
     )
     application.add_handler(
         CallbackQueryHandler(

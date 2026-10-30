@@ -13,6 +13,8 @@ from miskatonic_scribe.domain.models import (
     CardAlternative,
     CardMatchResult,
     ExtractedCardIntent,
+    ExtractedDeckPayload,
+    InvestigatorMatchResult,
     PipelineExecutionResult,
 )
 
@@ -23,6 +25,8 @@ __all__ = [
     "CardDatabaseError",
     "CardMatchResult",
     "ExtractedCardIntent",
+    "ExtractedDeckPayload",
+    "InvestigatorMatchResult",
     "LLMExtractionError",
     "MiskatonicScribeError",
     "PersistenceError",

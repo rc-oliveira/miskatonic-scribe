@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import List, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 from miskatonic_scribe.domain.models import (
     ArkhamCardRecord,
     CardMatchResult,
     ExtractedCardIntent,
+    ExtractedDeckPayload,
+    InvestigatorMatchResult,
 )
 
 
@@ -34,11 +36,25 @@ class IAudioTranscriber(ABC):
 
 
 class ICardIntentExtractor(ABC):
-    """Interface for LLM-based card extraction from noisy transcriptions."""
+    """Interface for LLM-based card and investigator extraction from text or audio."""
 
     @abstractmethod
     def extract_cards(self, transcribed_text: str) -> Tuple[List[ExtractedCardIntent], str]:
         """Extract cards from text and return (list of ExtractedCardIntent, model_name_used)."""
+
+    def extract_deck_payload(
+        self,
+        transcribed_text: Optional[str] = None,
+        audio_path: Optional[Path] = None,
+    ) -> Tuple[ExtractedDeckPayload, str]:
+        """Extract full deck payload (investigator, cards, removals) from text and/or audio."""
+        if not transcribed_text:
+            raise NotImplementedError("Subclasses must implement extract_deck_payload for audio.")
+        intents, model_used = self.extract_cards(transcribed_text)
+        return (
+            ExtractedDeckPayload(transcricao=transcribed_text, cartas=intents),
+            model_used,
+        )
 
 
 class ICardRepository(ABC):
@@ -54,7 +70,7 @@ class ICardRepository(ABC):
 
 
 class ICardMatcher(ABC):
-    """Interface for fuzzy-matching LLM intents against ArkhamDB card records."""
+    """Interface for fuzzy-matching LLM intents and investigators against ArkhamDB card records."""
 
     @abstractmethod
     def match_intent(self, intent: ExtractedCardIntent) -> CardMatchResult:
@@ -64,12 +80,22 @@ class ICardMatcher(ABC):
     def match_all(self, intents: Sequence[ExtractedCardIntent]) -> List[CardMatchResult]:
         """Match a sequence of extracted card intents against ArkhamDB."""
 
+    def match_investigator(self, investigator_name: str) -> InvestigatorMatchResult:
+        """Match an investigator name against ArkhamDB investigator records."""
+        return InvestigatorMatchResult(raw_name=investigator_name, matched=False)
+
 
 class IUserCollectionRepository(ABC):
     """Interface for persisting confirmed card registrations per Telegram user."""
 
     @abstractmethod
-    def register_cards(self, user_id: int, username: str | None, matches: Sequence[CardMatchResult]) -> int:
+    def register_cards(
+        self,
+        user_id: int,
+        username: str | None,
+        matches: Sequence[CardMatchResult],
+        investigator: Optional[InvestigatorMatchResult] = None,
+    ) -> int:
         """Persist confirmed card matches for a user and return total copy count stored."""
 
     @abstractmethod

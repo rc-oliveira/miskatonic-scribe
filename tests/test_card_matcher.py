@@ -138,3 +138,29 @@ def test_matcher_returns_unmatched_for_unknown_card(cards_json_file: Path) -> No
     assert res.matched is False
     assert res.card_code is None
     assert "Não encontrada no ArkhamDB" in res.format_telegram_line()
+
+
+def test_matcher_upgrades_xp0_weak_match_to_exact_name_higher_xp(cards_json_file: Path) -> None:
+    """When user omits XP (nivel=0) for 'Counterspell' (which only exists at XP 2, ID 04110),
+    matcher must choose Counterspell (100%, XP 2) over Counterpunch (67%, XP 0)."""
+    repo = ArkhamDBCardRepository(cards_path=cards_json_file)
+    matcher = ArkhamFuzzyCardMatcher(repository=repo, similarity_threshold=65)
+
+    res = matcher.match_intent(ExtractedCardIntent(nome="Counterspell", nivel=0, quantidade=1))
+    assert res.matched is True
+    assert res.card_code == "04110"
+    assert res.official_name == "Counterspell"
+    assert res.matched_xp == 2
+
+
+def test_matcher_matches_investigator_diana_stanley(cards_json_file: Path) -> None:
+    """Investigator matcher must identify Diana Stanley (ID 05004)."""
+    repo = ArkhamDBCardRepository(cards_path=cards_json_file)
+    matcher = ArkhamFuzzyCardMatcher(repository=repo, similarity_threshold=65)
+
+    inv = matcher.match_investigator("Diana Stanley")
+    assert inv.matched is True
+    assert inv.card_code == "05004"
+    assert inv.official_name == "Diana Stanley"
+    assert "05004" in inv.format_telegram_line()
+

@@ -10,7 +10,7 @@ from miskatonic_scribe.bot.telegram_handlers import MiskatonicTelegramBot
 from miskatonic_scribe.config import AudioMaintenanceConfig, parse_allowed_user_ids
 from miskatonic_scribe.domain.exceptions import LLMExtractionError, TranscriptionError
 from miskatonic_scribe.domain.interfaces import IAudioTranscriber, ICardIntentExtractor
-from miskatonic_scribe.domain.models import ExtractedCardIntent
+from miskatonic_scribe.domain.models import ExtractedCardIntent, ExtractedDeckPayload
 from miskatonic_scribe.infrastructure.arkhamdb_repository import ArkhamDBCardRepository
 from miskatonic_scribe.infrastructure.audio_storage import LocalAudioStorageManager
 from miskatonic_scribe.infrastructure.user_collection_repository import (
@@ -427,3 +427,130 @@ def test_telegram_audio_download_retries_on_timeout_and_logs_to_file(
     assert "Últimos Logs:" in logs_reply
     assert "Timed out" in logs_reply
 
+
+
+class StubDeckPayloadExtractor(ICardIntentExtractor):
+    def __init__(self, payloads: List[ExtractedDeckPayload]) -> None:
+        self._payloads = list(payloads)
+
+    def extract_cards(self, transcribed_text: str) -> Tuple[List[ExtractedCardIntent], str]:
+        payload = self._payloads.pop(0)
+        return payload.cartas, "gemini-3.5-flash"
+
+    def extract_deck_payload(
+        self,
+        transcribed_text: str | None = None,
+        audio_path: Path | None = None,
+    ) -> Tuple[ExtractedDeckPayload, str]:
+        return self._payloads.pop(0), "gemini-3.5-flash"
+
+
+def test_telegram_text_correction_merges_pending_batch_and_exports_dek(
+    tmp_path: Path,
+    cards_json_file: Path,
+) -> None:
+    """Verify user can send a voice note (which misheard 'Astral Travel'), then send a text message
+    to remove 'Astral Travel' and add '2x I've had worse… (lvl 2)', and upon confirming receive the .dek file."""
+    audio_storage = LocalAudioStorageManager(
+        config=AudioMaintenanceConfig(storage_dir=tmp_path / "audio", max_files=5, max_age_days=3)
+    )
+    repo = ArkhamDBCardRepository(cards_path=cards_json_file)
+    matcher = ArkhamFuzzyCardMatcher(repository=repo, similarity_threshold=65)
+    collection_repo = JsonUserCollectionRepository(db_path=tmp_path / "collections.json")
+
+    extractor = StubDeckPayloadExtractor(
+        [
+            ExtractedDeckPayload(
+                transcricao="Deck da Ana Estandley, dois definhar e dois faixão arranhão",
+                investigador="Diana Stanley",
+                cartas=[
+                    ExtractedCardIntent(nome="Shrivelling", nivel=0, quantidade=2),
+                    ExtractedCardIntent(nome="Astral Travel", nivel=0, quantidade=2),
+                ],
+                remover=[],
+            ),
+            ExtractedDeckPayload(
+                transcricao="trocar Astral Travel por 2 Foi só um arranhão nível 2",
+                investigador=None,
+                cartas=[
+                    ExtractedCardIntent(nome="I've had worse…", nivel=2, quantidade=2),
+                ],
+                remover=["Astral Travel"],
+            ),
+        ]
+    )
+
+    pipeline = CardRegistrationPipeline(
+        transcriber=StubTranscriber("Deck da Ana Estandley, dois definhar e dois faixão arranhão"),
+        extractor=extractor,
+        matcher=matcher,
+        transcription_mode="whisper",
+    )
+    bot = MiskatonicTelegramBot(
+        audio_storage=audio_storage,
+        pipeline=pipeline,
+        collection_repo=collection_repo,
+        card_repo=repo,
+        allowed_user_ids={AUTHORIZED_USER_ID},
+        use_thread_pool=False,
+    )
+
+    context = MagicMock()
+    context.user_data = {}
+
+    # Step 1: Send voice message
+    voice_update = MagicMock()
+    voice_update.effective_user.id = AUTHORIZED_USER_ID
+    voice_update.callback_query = None
+    voice_update.message.audio = None
+    voice_update.message.voice.file_unique_id = "voiceDiana1"
+    telegram_file = MagicMock()
+    telegram_file.download_to_drive = AsyncMock(
+        side_effect=lambda custom_path, **kw: Path(custom_path).write_bytes(b"OggS")
+    )
+    voice_update.message.voice.get_file = AsyncMock(return_value=telegram_file)
+    voice_status = MagicMock()
+    voice_status.edit_text = AsyncMock()
+    voice_update.message.reply_text = AsyncMock(return_value=voice_status)
+
+    _drive_coroutine(bot.handle_voice_or_audio(voice_update, context))
+    first_msg = voice_status.edit_text.call_args.args[0]
+    assert "Diana Stanley" in first_msg
+    assert "05004" in first_msg
+    assert "Astral Travel" in first_msg
+
+    # Step 2: Send text message to replace Astral Travel with 2x I've had worse… (lvl 2)
+    text_update = MagicMock()
+    text_update.effective_user.id = AUTHORIZED_USER_ID
+    text_update.callback_query = None
+    text_update.message.text = "trocar Astral Travel por 2 Foi só um arranhão nível 2"
+    text_status = MagicMock()
+    text_status.edit_text = AsyncMock()
+    text_update.message.reply_text = AsyncMock(return_value=text_status)
+
+    _drive_coroutine(bot.handle_text_message(text_update, context))
+    second_msg = text_status.edit_text.call_args.args[0]
+    assert "Diana Stanley" in second_msg
+    assert "03034" not in second_msg
+    assert "2x Astral Travel" not in second_msg
+    assert "2x I've had worse… (Nível 2) - ID: 02261" in second_msg
+
+    # Step 3: Confirm the updated batch and verify .dek file is sent via reply_document
+    active_batch_id = context.user_data["active_batch_id"]
+    cb_update = MagicMock()
+    cb_update.effective_user.id = AUTHORIZED_USER_ID
+    cb_update.effective_user.username = "rodrigo"
+    cb_update.callback_query.data = f"confirm:{active_batch_id}"
+    cb_update.callback_query.answer = AsyncMock()
+    cb_update.callback_query.edit_message_text = AsyncMock()
+    cb_update.callback_query.message.reply_document = AsyncMock()
+
+    _drive_coroutine(bot.handle_confirmation_callback(cb_update, context))
+
+    cb_update.callback_query.message.reply_document.assert_awaited_once()
+    doc_kwargs = cb_update.callback_query.message.reply_document.call_args.kwargs
+    assert doc_kwargs["filename"].startswith("deck_diana_stanley_")
+    assert doc_kwargs["filename"].endswith(".dek")
+    dek_bytes = doc_kwargs["document"].getvalue().decode("utf-8")
+    assert "Diana Stanley" in dek_bytes
+    assert "I've had worse…" in dek_bytes

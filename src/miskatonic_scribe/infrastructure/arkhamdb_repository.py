@@ -127,6 +127,9 @@ class ArkhamDBCardRepository(ICardRepository):
         duplicate_of = raw.get("duplicate_of_code") or raw.get("duplicate_of")
         duplicate_str = str(duplicate_of).strip() if duplicate_of else None
 
+        octgn_id = raw.get("octgn_id")
+        octgn_str = str(octgn_id).strip() if octgn_id else None
+
         return ArkhamCardRecord(
             code=code,
             real_name=real_name,
@@ -137,6 +140,7 @@ class ArkhamDBCardRepository(ICardRepository):
             faction_code=raw.get("faction_code"),
             type_code=raw.get("type_code"),
             duplicate_of_code=duplicate_str,
+            octgn_id=octgn_str,
         )
 
     def load_cards(self, force_reload: bool = False) -> Sequence[ArkhamCardRecord]:

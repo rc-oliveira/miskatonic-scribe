@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, List
 
 import pytest
@@ -173,3 +174,29 @@ def test_gemini_raises_when_all_models_exhausted() -> None:
 
     with pytest.raises(LLMExtractionError, match="Falha ao estruturar cartas via Gemini"):
         extractor.extract_cards("duas machetes")
+
+
+def test_gemini_extracts_full_deck_payload_with_investigator_and_audio(tmp_path: Path) -> None:
+    """Verify extract_deck_payload parses investigator, cards, and removals from multimodal audio/text."""
+    audio_file = tmp_path / "voice.ogg"
+    audio_file.write_bytes(b"OggS-audio-data")
+
+    cfg = GeminiModelConfig(api_key="key", primary_model="gemini-3.5-flash", max_retries=0)
+    client = FakeGenAIClient(
+        [
+            '{"transcricao": "Deck da Diana Stanley, trocar Astral Travel por 2 Foi só um arranhão nivel 2", '
+            '"investigador": "Diana Stanley", '
+            '"cartas": [{"nome": "I\'ve had worse…", "nivel": 2, "quantidade": 2}], '
+            '"remover": ["Astral Travel"]}'
+        ]
+    )
+    extractor = GeminiCardIntentExtractor(config=cfg, client=client, sleep_fn=lambda _: None)
+
+    payload, model_used = extractor.extract_deck_payload(audio_path=audio_file)
+    assert model_used == "gemini-3.5-flash"
+    assert payload.investigador == "Diana Stanley"
+    assert len(payload.cartas) == 1
+    assert payload.cartas[0].nome == "I've had worse…"
+    assert payload.cartas[0].nivel == 2
+    assert payload.remover == ["Astral Travel"]
+

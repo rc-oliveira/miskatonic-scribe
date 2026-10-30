@@ -6,11 +6,11 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from miskatonic_scribe.domain.exceptions import PersistenceError
 from miskatonic_scribe.domain.interfaces import IUserCollectionRepository
-from miskatonic_scribe.domain.models import CardMatchResult
+from miskatonic_scribe.domain.models import CardMatchResult, InvestigatorMatchResult
 
 logger = logging.getLogger(__name__)
 
@@ -48,10 +48,11 @@ class JsonUserCollectionRepository(IUserCollectionRepository):
         user_id: int,
         username: str | None,
         matches: Sequence[CardMatchResult],
+        investigator: Optional[InvestigatorMatchResult] = None,
     ) -> int:
         """Persist matched cards for a user and return the total copies registered in this batch."""
         valid_matches = [m for m in matches if m.matched and m.card_code]
-        if not valid_matches:
+        if not valid_matches and not (investigator and investigator.matched):
             return 0
 
         db = self._read_db()
@@ -64,11 +65,18 @@ class JsonUserCollectionRepository(IUserCollectionRepository):
                 "user_id": user_id,
                 "username": username,
                 "updated_at": now_iso,
+                "last_investigator": None,
                 "cards": {},
             },
         )
         user_entry["username"] = username or user_entry.get("username")
         user_entry["updated_at"] = now_iso
+        if investigator and investigator.matched and investigator.card_code:
+            user_entry["last_investigator"] = {
+                "code": investigator.card_code,
+                "name": investigator.official_name,
+                "subname": investigator.subname,
+            }
 
         cards_map: Dict[str, Any] = user_entry.setdefault("cards", {})
         added_copies = 0

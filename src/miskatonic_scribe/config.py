@@ -122,11 +122,15 @@ class AppConfig:
     telegram_connect_timeout: float = 30.0
     telegram_read_timeout: float = 60.0
     telegram_download_retries: int = 3
+    transcription_mode: str = "whisper"
     whisper_model_name: str = "base"
     whisper_device: str = "cpu"
     arkhamdb_cards_path: Path = Path("cards.json")
     arkhamdb_api_url: str = "https://arkhamdb.com/api/public/cards/"
     arkhamdb_refresh_days: int = 30
+    arkhamdb_username: str = ""
+    arkhamdb_password: str = ""
+    arkhamdb_access_token: str = ""
     fuzzy_match_threshold: int = 65
     user_collection_db_path: Path = Path("data/user_collections.json")
     log_level: str = "INFO"
@@ -177,6 +181,7 @@ class AppConfig:
             telegram_connect_timeout=connect_timeout,
             telegram_read_timeout=read_timeout,
             telegram_download_retries=download_retries,
+            transcription_mode=os.getenv("TRANSCRIPTION_MODE", "whisper").strip().lower() or "whisper",
             whisper_model_name=os.getenv("WHISPER_MODEL_NAME", "base").strip() or "base",
             whisper_device=os.getenv("WHISPER_DEVICE", "cpu").strip() or "cpu",
             arkhamdb_cards_path=Path(os.getenv("ARKHAMDB_CARDS_PATH", "cards.json")),
@@ -184,6 +189,9 @@ class AppConfig:
                 "ARKHAMDB_API_URL", "https://arkhamdb.com/api/public/cards/"
             ).strip(),
             arkhamdb_refresh_days=refresh_days,
+            arkhamdb_username=os.getenv("ARKHAMDB_USERNAME", "").strip(),
+            arkhamdb_password=os.getenv("ARKHAMDB_PASSWORD", "").strip(),
+            arkhamdb_access_token=os.getenv("ARKHAMDB_ACCESS_TOKEN", "").strip(),
             fuzzy_match_threshold=threshold,
             user_collection_db_path=Path(
                 os.getenv("USER_COLLECTION_DB_PATH", "data/user_collections.json")
