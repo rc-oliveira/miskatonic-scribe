@@ -48,6 +48,10 @@ class ICardRepository(ABC):
     def load_cards(self) -> Sequence[ArkhamCardRecord]:
         """Load all player cards from local cache or download from ArkhamDB."""
 
+    @abstractmethod
+    def refresh_cards(self) -> Sequence[ArkhamCardRecord]:
+        """Force download of cards.json from ArkhamDB and reload the in-memory cache."""
+
 
 class ICardMatcher(ABC):
     """Interface for fuzzy-matching LLM intents against ArkhamDB card records."""

@@ -28,6 +28,7 @@ from miskatonic_scribe.domain.exceptions import (
 )
 from miskatonic_scribe.domain.interfaces import (
     IAudioStorageManager,
+    ICardRepository,
     IUserCollectionRepository,
 )
 from miskatonic_scribe.domain.models import CardMatchResult, PipelineExecutionResult
@@ -44,12 +45,14 @@ class MiskatonicTelegramBot:
         audio_storage: IAudioStorageManager,
         pipeline: CardRegistrationPipeline,
         collection_repo: IUserCollectionRepository,
+        card_repo: Optional[ICardRepository] = None,
         allowed_user_ids: Optional[Collection[int]] = None,
         use_thread_pool: bool = True,
     ) -> None:
         self._audio_storage = audio_storage
         self._pipeline = pipeline
         self._collection_repo = collection_repo
+        self._card_repo = card_repo
         self._allowed_user_ids: FrozenSet[int] = (
             frozenset(allowed_user_ids)
             if allowed_user_ids is not None
@@ -102,9 +105,34 @@ class MiskatonicTelegramBot:
             "_'Coloca duas cópias de Definhar nível 3 e dois Machetes nível 0'_\n\n"
             "Comandos disponíveis:\n"
             "• `/start` - Exibe esta mensagem de ajuda\n"
-            "• `/colecao` - Lista as cartas já confirmadas e salvas na sua coleção"
+            "• `/colecao` - Lista as cartas já confirmadas e salvas na sua coleção\n"
+            "• `/atualizar_cartas` - Força o download imediato da base do ArkhamDB"
         )
         await update.message.reply_text(welcome_text, parse_mode="Markdown")
+
+    async def sync_cards_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /atualizar_cartas (/sync_cards) to force-refresh cards.json from ArkhamDB."""
+        if not update.message:
+            return
+        if not await self._ensure_authorized(update):
+            return
+        if self._card_repo is None:
+            await update.message.reply_text("⚠️ Repositório de cartas não configurado para atualização manual.")
+            return
+
+        status_msg = await update.message.reply_text("🔄 Atualizando `cards.json` a partir do servidor do ArkhamDB...", parse_mode="Markdown")
+        try:
+            if self._use_thread_pool:
+                records = await asyncio.to_thread(self._card_repo.refresh_cards)
+            else:
+                records = self._card_repo.refresh_cards()
+        except CardDatabaseError as exc:
+            await status_msg.edit_text(f"❌ Falha ao atualizar base do ArkhamDB: {exc}")
+        else:
+            await status_msg.edit_text(
+                f"✅ Base do ArkhamDB (`cards.json`) atualizada com sucesso! Total de cartas carregadas: *{len(records)}*.",
+                parse_mode="Markdown",
+            )
 
     async def collection_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /colecao command to display the user's persisted cards."""
@@ -325,6 +353,9 @@ def build_telegram_application(
     application.add_handler(CommandHandler(["start", "help"], controller.start_command))
     application.add_handler(
         CommandHandler(["colecao", "collection"], controller.collection_command)
+    )
+    application.add_handler(
+        CommandHandler(["atualizar_cartas", "sync_cards"], controller.sync_cards_command)
     )
     application.add_handler(
         MessageHandler(filters.VOICE | filters.AUDIO, controller.handle_voice_or_audio)

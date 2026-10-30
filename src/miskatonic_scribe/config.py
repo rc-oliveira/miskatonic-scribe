@@ -123,6 +123,7 @@ class AppConfig:
     whisper_device: str = "cpu"
     arkhamdb_cards_path: Path = Path("cards.json")
     arkhamdb_api_url: str = "https://arkhamdb.com/api/public/cards/"
+    arkhamdb_refresh_days: int = 30
     fuzzy_match_threshold: int = 65
     user_collection_db_path: Path = Path("data/user_collections.json")
     log_level: str = "INFO"
@@ -141,6 +142,11 @@ class AppConfig:
         except ValueError:
             threshold = 65
 
+        try:
+            refresh_days = max(1, int(os.getenv("ARKHAMDB_REFRESH_DAYS", "30")))
+        except ValueError:
+            refresh_days = 30
+
         raw_allowed_ids = os.getenv("TELEGRAM_ALLOWED_USER_IDS", "1725371455")
         allowed_user_ids = parse_allowed_user_ids(raw_allowed_ids)
 
@@ -155,6 +161,7 @@ class AppConfig:
             arkhamdb_api_url=os.getenv(
                 "ARKHAMDB_API_URL", "https://arkhamdb.com/api/public/cards/"
             ).strip(),
+            arkhamdb_refresh_days=refresh_days,
             fuzzy_match_threshold=threshold,
             user_collection_db_path=Path(
                 os.getenv("USER_COLLECTION_DB_PATH", "data/user_collections.json")

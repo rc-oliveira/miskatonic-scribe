@@ -23,8 +23,9 @@ COPY requirements.txt .
 RUN pip install --extra-index-url https://download.pytorch.org/whl/cpu torch && \
     pip install -r requirements.txt
 
-# Copy application code
+# Copy application code and maintenance scripts
 COPY src/ ./src/
+COPY scripts/ ./scripts/
 COPY main.py ./
 
 # Prepare runtime directories with proper ownership

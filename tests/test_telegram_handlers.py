@@ -91,6 +91,7 @@ def test_unauthorized_user_is_blocked_across_all_handlers(
         audio_storage=audio_storage,
         pipeline=pipeline,
         collection_repo=collection_repo,
+        card_repo=repo,
         allowed_user_ids={AUTHORIZED_USER_ID},
         use_thread_pool=False,
     )
@@ -155,6 +156,7 @@ def test_telegram_voice_to_confirmation_and_collection_flow(
         audio_storage=audio_storage,
         pipeline=pipeline,
         collection_repo=collection_repo,
+        card_repo=repo,
         allowed_user_ids={AUTHORIZED_USER_ID},
         use_thread_pool=False,
     )
@@ -222,6 +224,17 @@ def test_telegram_voice_to_confirmation_and_collection_flow(
     assert "02066" in col_reply
     assert "01020" in col_reply
 
+    # Test /atualizar_cartas command output
+    sync_status_msg = MagicMock()
+    sync_status_msg.edit_text = AsyncMock()
+    sync_update = MagicMock()
+    sync_update.effective_user.id = AUTHORIZED_USER_ID
+    sync_update.callback_query = None
+    sync_update.message.reply_text = AsyncMock(return_value=sync_status_msg)
+    repo.refresh_cards = MagicMock(return_value=repo.load_cards())  # type: ignore[method-assign]
+    _drive_coroutine(bot.sync_cards_command(sync_update, context))
+    assert "atualizada com sucesso" in sync_status_msg.edit_text.call_args.args[0]
+
 
 def test_telegram_cancel_callback_discards_batch(
     tmp_path: Path,
@@ -243,6 +256,7 @@ def test_telegram_cancel_callback_discards_batch(
         audio_storage=audio_storage,
         pipeline=pipeline,
         collection_repo=collection_repo,
+        card_repo=repo,
         allowed_user_ids={AUTHORIZED_USER_ID},
         use_thread_pool=False,
     )

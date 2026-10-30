@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, List
+
+import requests
 
 from miskatonic_scribe.domain.models import ExtractedCardIntent
 from miskatonic_scribe.infrastructure.arkhamdb_repository import ArkhamDBCardRepository
@@ -36,6 +39,52 @@ def test_repository_downloads_cards_json_when_missing(
 
     assert target_file.exists()
     assert len(records) == len(sample_arkhamdb_payload)
+
+
+def test_repository_auto_refreshes_expired_cards_and_falls_back_if_offline(
+    cards_json_file: Path,
+    sample_arkhamdb_payload: List[dict[str, Any]],
+) -> None:
+    """When cards.json exceeds ARKHAMDB_REFRESH_DAYS, repository refreshes it automatically;
+    if ArkhamDB is temporarily offline, it falls back gracefully to the existing local file."""
+    now = 1_800_000_000.0
+    expired_mtime = now - (35 * 86400)  # 35 days old (> 30 days TTL)
+    os.utime(cards_json_file, (expired_mtime, expired_mtime))
+
+    # 1. Test graceful fallback when ArkhamDB is offline during periodic refresh
+    def failing_get(url: str, timeout: float) -> Any:
+        raise requests.ConnectionError("ArkhamDB temporarily unreachable")
+
+    repo_offline = ArkhamDBCardRepository(
+        cards_path=cards_json_file,
+        refresh_days=30,
+        http_get=failing_get,
+        clock=lambda: now,
+    )
+    fallback_records = repo_offline.load_cards()
+    assert len(fallback_records) == len(sample_arkhamdb_payload)
+
+    # 2. Test successful periodic refresh adding a new card
+    updated_payload = [
+        *sample_arkhamdb_payload,
+        {
+            "code": "09001",
+            "name": "Runic Axe",
+            "real_name": "Runic Axe",
+            "xp": 0,
+            "pack_code": "tsk",
+            "faction_code": "guardian",
+            "type_code": "asset",
+        },
+    ]
+    repo_online = ArkhamDBCardRepository(
+        cards_path=cards_json_file,
+        refresh_days=30,
+        http_get=lambda url, timeout: DummyHttpResponse(updated_payload),
+        clock=lambda: now,
+    )
+    refreshed_records = repo_online.load_cards()
+    assert len(refreshed_records) == len(sample_arkhamdb_payload) + 1
 
 
 def test_matcher_finds_exact_xp_and_prioritizes_original_release(cards_json_file: Path) -> None:

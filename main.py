@@ -46,6 +46,7 @@ def bootstrap_application(config: AppConfig | None = None) -> MiskatonicTelegram
     card_repository = ArkhamDBCardRepository(
         cards_path=cfg.arkhamdb_cards_path,
         api_url=cfg.arkhamdb_api_url,
+        refresh_days=cfg.arkhamdb_refresh_days,
     )
     # Warm up local cards.json on startup (downloads from ArkhamDB if missing)
     card_repository.load_cards()
@@ -70,6 +71,7 @@ def bootstrap_application(config: AppConfig | None = None) -> MiskatonicTelegram
         audio_storage=audio_storage,
         pipeline=pipeline,
         collection_repo=collection_repo,
+        card_repo=card_repository,
         allowed_user_ids=cfg.allowed_user_ids,
     )
 
