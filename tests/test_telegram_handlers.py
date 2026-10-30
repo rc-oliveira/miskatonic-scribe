@@ -16,6 +16,7 @@ from miskatonic_scribe.infrastructure.audio_storage import LocalAudioStorageMana
 from miskatonic_scribe.infrastructure.user_collection_repository import (
     JsonUserCollectionRepository,
 )
+from miskatonic_scribe.logging_config import configure_logging
 from miskatonic_scribe.services.card_matcher import ArkhamFuzzyCardMatcher
 from miskatonic_scribe.services.registration_pipeline import CardRegistrationPipeline
 
@@ -341,3 +342,88 @@ def test_telegram_handles_transcription_and_llm_errors_gracefully(
     status_msg.edit_text.reset_mock()
     _drive_coroutine(bot_llm_fail.handle_voice_or_audio(update, MagicMock()))
     assert "Falha ao processar cartas via Gemini" in status_msg.edit_text.call_args.args[0]
+
+
+def test_telegram_audio_download_retries_on_timeout_and_logs_to_file(
+    tmp_path: Path,
+    cards_json_file: Path,
+) -> None:
+    """Verify transient 'Timed out' on Telegram audio download is retried and logged to disk."""
+    log_file = tmp_path / "logs" / "miskatonic_scribe.log"
+    configure_logging(level="INFO", log_file_path=log_file)
+
+    audio_storage = LocalAudioStorageManager(
+        config=AudioMaintenanceConfig(storage_dir=tmp_path / "audio", max_files=5, max_age_days=3)
+    )
+    repo = ArkhamDBCardRepository(cards_path=cards_json_file)
+    matcher = ArkhamFuzzyCardMatcher(repository=repo)
+    collection_repo = JsonUserCollectionRepository(db_path=tmp_path / "collections.json")
+
+    sleeps: list[float] = []
+    bot = MiskatonicTelegramBot(
+        audio_storage=audio_storage,
+        pipeline=CardRegistrationPipeline(
+            transcriber=StubTranscriber("Duas Machetes"),
+            extractor=StubExtractor([ExtractedCardIntent(nome="Machete", nivel=0, quantidade=2)]),
+            matcher=matcher,
+        ),
+        collection_repo=collection_repo,
+        allowed_user_ids={AUTHORIZED_USER_ID},
+        connect_timeout=30.0,
+        read_timeout=60.0,
+        download_retries=3,
+        log_file_path=log_file,
+        use_thread_pool=False,
+        sleep_fn=sleeps.append,
+    )
+
+    update = MagicMock()
+    update.effective_user.id = AUTHORIZED_USER_ID
+    update.callback_query = None
+    update.message.audio = None
+    update.message.voice.file_unique_id = "timeoutRetry1"
+    update.message.voice.file_id = "file_id_123"
+    update.message.voice.file_size = 18432
+    update.message.voice.duration = 4
+
+    attempts = 0
+
+    async def flaky_download_to_drive(custom_path: str, **kwargs: Any) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise TimeoutError("Timed out")
+        Path(custom_path).write_bytes(b"OggS-recovered")
+
+    telegram_file = MagicMock()
+    telegram_file.download_to_drive = AsyncMock(side_effect=flaky_download_to_drive)
+    update.message.voice.get_file = AsyncMock(return_value=telegram_file)
+
+    status_msg = MagicMock()
+    status_msg.edit_text = AsyncMock()
+    update.message.reply_text = AsyncMock(return_value=status_msg)
+    context = MagicMock()
+    context.user_data = {}
+
+    _drive_coroutine(bot.handle_voice_or_audio(update, context))
+
+    assert attempts == 3
+    assert sleeps == [1.5, 3.0]
+    sent_text = status_msg.edit_text.call_args.args[0]
+    assert "2x Machete (Nível 0) - ID: 01020" in sent_text
+
+    # Verify persistent log file contains the retry warnings and can be queried via /logs
+    assert log_file.exists()
+    log_contents = log_file.read_text(encoding="utf-8")
+    assert "Telegram audio download failed on attempt 1/3" in log_contents
+    assert "Timed out" in log_contents
+
+    logs_update = MagicMock()
+    logs_update.effective_user.id = AUTHORIZED_USER_ID
+    logs_update.callback_query = None
+    logs_update.message.reply_text = AsyncMock()
+    _drive_coroutine(bot.logs_command(logs_update, context))
+    logs_reply = logs_update.message.reply_text.call_args.args[0]
+    assert "Últimos Logs:" in logs_reply
+    assert "Timed out" in logs_reply
+

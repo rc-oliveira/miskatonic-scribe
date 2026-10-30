@@ -33,13 +33,18 @@ logger = logging.getLogger(__name__)
 def bootstrap_application(config: AppConfig | None = None) -> MiskatonicTelegramBot:
     """Wire all dependencies following Dependency Inversion and warm up ArkhamDB cache."""
     cfg = config or AppConfig.from_env()
-    configure_logging(cfg.log_level)
+    configure_logging(level=cfg.log_level, log_file_path=cfg.log_file_path)
 
     logger.info(
-        "Initializing Miskatonic Scribe | Primary LLM: %s | Fallbacks: %s | Allowed User IDs: %s",
+        "Initializing Miskatonic Scribe | Primary LLM: %s | Fallbacks: %s | Allowed User IDs: %s | "
+        "Telegram Timeouts (connect=%.1fs, read=%.1fs, retries=%d) | Log File: %s",
         cfg.gemini.primary_model,
         cfg.gemini.fallback_models,
         sorted(cfg.allowed_user_ids),
+        cfg.telegram_connect_timeout,
+        cfg.telegram_read_timeout,
+        cfg.telegram_download_retries,
+        cfg.log_file_path,
     )
 
     audio_storage = LocalAudioStorageManager(config=cfg.audio)
@@ -73,6 +78,10 @@ def bootstrap_application(config: AppConfig | None = None) -> MiskatonicTelegram
         collection_repo=collection_repo,
         card_repo=card_repository,
         allowed_user_ids=cfg.allowed_user_ids,
+        connect_timeout=cfg.telegram_connect_timeout,
+        read_timeout=cfg.telegram_read_timeout,
+        download_retries=cfg.telegram_download_retries,
+        log_file_path=cfg.log_file_path,
     )
 
 
@@ -83,6 +92,8 @@ def main() -> None:
     app = build_telegram_application(
         bot_token=cfg.telegram_bot_token,
         controller=controller,
+        connect_timeout=cfg.telegram_connect_timeout,
+        read_timeout=cfg.telegram_read_timeout,
     )
     logger.info("Miskatonic Scribe Bot is now listening for voice/audio messages...")
     app.run_polling(drop_pending_updates=True)

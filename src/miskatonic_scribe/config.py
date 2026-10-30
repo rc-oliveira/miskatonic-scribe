@@ -119,6 +119,9 @@ class AppConfig:
     gemini: GeminiModelConfig
     audio: AudioMaintenanceConfig
     allowed_user_ids: FrozenSet[int] = field(default_factory=lambda: frozenset({1725371455}))
+    telegram_connect_timeout: float = 30.0
+    telegram_read_timeout: float = 60.0
+    telegram_download_retries: int = 3
     whisper_model_name: str = "base"
     whisper_device: str = "cpu"
     arkhamdb_cards_path: Path = Path("cards.json")
@@ -127,6 +130,7 @@ class AppConfig:
     fuzzy_match_threshold: int = 65
     user_collection_db_path: Path = Path("data/user_collections.json")
     log_level: str = "INFO"
+    log_file_path: Path = Path("data/logs/miskatonic_scribe.log")
 
     @classmethod
     def from_env(cls, env_file: str | Path | None = None) -> AppConfig:
@@ -147,6 +151,21 @@ class AppConfig:
         except ValueError:
             refresh_days = 30
 
+        try:
+            connect_timeout = max(5.0, float(os.getenv("TELEGRAM_CONNECT_TIMEOUT", "30.0")))
+        except ValueError:
+            connect_timeout = 30.0
+
+        try:
+            read_timeout = max(10.0, float(os.getenv("TELEGRAM_READ_TIMEOUT", "60.0")))
+        except ValueError:
+            read_timeout = 60.0
+
+        try:
+            download_retries = max(1, int(os.getenv("TELEGRAM_DOWNLOAD_RETRIES", "3")))
+        except ValueError:
+            download_retries = 3
+
         raw_allowed_ids = os.getenv("TELEGRAM_ALLOWED_USER_IDS", "1725371455")
         allowed_user_ids = parse_allowed_user_ids(raw_allowed_ids)
 
@@ -155,6 +174,9 @@ class AppConfig:
             gemini=GeminiModelConfig.from_env(),
             audio=AudioMaintenanceConfig.from_env(),
             allowed_user_ids=allowed_user_ids,
+            telegram_connect_timeout=connect_timeout,
+            telegram_read_timeout=read_timeout,
+            telegram_download_retries=download_retries,
             whisper_model_name=os.getenv("WHISPER_MODEL_NAME", "base").strip() or "base",
             whisper_device=os.getenv("WHISPER_DEVICE", "cpu").strip() or "cpu",
             arkhamdb_cards_path=Path(os.getenv("ARKHAMDB_CARDS_PATH", "cards.json")),
@@ -167,4 +189,7 @@ class AppConfig:
                 os.getenv("USER_COLLECTION_DB_PATH", "data/user_collections.json")
             ),
             log_level=os.getenv("LOG_LEVEL", "INFO").strip() or "INFO",
+            log_file_path=Path(
+                os.getenv("LOG_FILE_PATH", "data/logs/miskatonic_scribe.log")
+            ),
         )

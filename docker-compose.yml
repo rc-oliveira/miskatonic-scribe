@@ -11,6 +11,7 @@ services:
       - ARKHAMDB_CARDS_PATH=/app/data/cards.json
       - USER_COLLECTION_DB_PATH=/app/data/user_collections.json
       - AUDIO_STORAGE_DIR=/app/temp_audio
+      - LOG_FILE_PATH=/app/data/logs/miskatonic_scribe.log
       - WHISPER_DEVICE=cpu
     volumes:
       # Persists cards.json and user_collections.json on host
