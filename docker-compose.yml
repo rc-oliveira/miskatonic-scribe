@@ -18,7 +18,7 @@ services:
       # Temporary audio folder managed by the 5-file / X-days cleanup routine
       - ./temp_audio:/app/temp_audio
       # Caches the Whisper 'base' model (~140MB) across container rebuilds
-      - whisper_cache:/home/scribe/.cache/whisper
+      - whisper_cache:/root/.cache/whisper
 
 volumes:
   whisper_cache:

@@ -14,9 +14,6 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends ffmpeg && \
     rm -rf /var/lib/apt/lists/*
 
-# Create a non-root user for security
-RUN useradd --create-home --shell /bin/bash scribe
-
 # Install CPU-only PyTorch first to avoid downloading ~2.5GB of unused NVIDIA CUDA libs
 # Works on both x86_64 (AMD Micro) and ARM64/aarch64 (Ampere A1) on Oracle Cloud Always Free
 COPY requirements.txt .
@@ -28,10 +25,7 @@ COPY src/ ./src/
 COPY scripts/ ./scripts/
 COPY main.py ./
 
-# Prepare runtime directories with proper ownership
-RUN mkdir -p /app/data /app/temp_audio /home/scribe/.cache/whisper && \
-    chown -R scribe:scribe /app /home/scribe
-
-USER scribe
+# Prepare runtime directories
+RUN mkdir -p /app/data /app/temp_audio /root/.cache/whisper
 
 CMD ["python", "main.py"]
