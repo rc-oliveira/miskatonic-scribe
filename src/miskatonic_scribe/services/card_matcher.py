@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import replace
-from typing import Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from thefuzz import fuzz
 
@@ -81,6 +81,152 @@ class ArkhamFuzzyCardMatcher(ICardMatcher):
         reprint_penalty = 1 if record.is_reprint else 0
         return (-score, xp_diff, reprint_penalty, record.code)
 
+    @classmethod
+    def _card_matches_deck_option(cls, card: ArkhamCardRecord, opt: dict[str, Any]) -> bool:
+        """Return True if `card` satisfies all criteria in a single ArkhamDB `deck_options` rule."""
+        if "option_select" in opt and isinstance(opt["option_select"], list):
+            return any(
+                cls._card_matches_deck_option(card, sub)
+                for sub in opt["option_select"]
+                if isinstance(sub, dict)
+            )
+
+        if "not" in opt and isinstance(opt["not"], dict):
+            if cls._card_matches_deck_option(card, opt["not"]):
+                return False
+
+        allowed_factions = opt.get("faction") or opt.get("faction_select")
+        if isinstance(allowed_factions, list) and allowed_factions:
+            allowed_set = {str(f).strip().lower() for f in allowed_factions if f}
+            if not any(cf in allowed_set for cf in card.factions):
+                return False
+
+        level_cfg = opt.get("level")
+        if isinstance(level_cfg, dict):
+            min_lvl = int(level_cfg.get("min", 0))
+            max_lvl = int(level_cfg.get("max", 5))
+            if not (min_lvl <= card.xp <= max_lvl):
+                return False
+
+        allowed_traits = opt.get("trait")
+        if isinstance(allowed_traits, list) and allowed_traits:
+            trait_set = {str(t).strip().lower().rstrip(".") for t in allowed_traits if t}
+            if not any(ct in trait_set for ct in card.normalized_traits):
+                return False
+
+        allowed_types = opt.get("type")
+        if isinstance(allowed_types, list) and allowed_types:
+            type_set = {str(t).strip().lower() for t in allowed_types if t}
+            if (card.type_code or "").strip().lower() not in type_set:
+                return False
+
+        allowed_uses = opt.get("uses")
+        if isinstance(allowed_uses, list) and allowed_uses:
+            text_lower = (card.real_text or "").lower()
+            if "uses (" not in text_lower or not any(
+                str(u).strip().lower() in text_lower for u in allowed_uses if u
+            ):
+                return False
+
+        text_patterns = opt.get("text")
+        if isinstance(text_patterns, list) and text_patterns:
+            card_text = card.real_text or ""
+            if not any(
+                re.search(str(pat), card_text, flags=re.IGNORECASE)
+                for pat in text_patterns
+                if pat
+            ):
+                return False
+
+        allowed_slots = opt.get("slot")
+        if isinstance(allowed_slots, list) and allowed_slots:
+            card_slots = {
+                s.strip().lower() for s in (card.real_slot or "").split(".") if s.strip()
+            }
+            slot_set = {str(s).strip().lower() for s in allowed_slots if s}
+            if not any(cs in slot_set for cs in card_slots):
+                return False
+
+        if "permanent" in opt and opt["permanent"] is not None:
+            if bool(card.permanent) != bool(opt["permanent"]):
+                return False
+
+        return True
+
+    @classmethod
+    def is_card_legal_for_investigator(
+        cls,
+        card: ArkhamCardRecord,
+        investigator: ArkhamCardRecord,
+    ) -> bool:
+        """Evaluate whether `card` can legally be included in `investigator`'s deck per ArkhamDB rules."""
+        inv_codes = {investigator.code}
+        if investigator.duplicate_of_code:
+            inv_codes.add(investigator.duplicate_of_code)
+
+        # 1. Investigator-specific signature cards
+        if card.restrictions_investigators:
+            return bool(inv_codes.intersection(card.restrictions_investigators))
+
+        if card.code in investigator.deck_requirements_cards or (
+            card.duplicate_of_code and card.duplicate_of_code in investigator.deck_requirements_cards
+        ):
+            return True
+
+        # 2. If investigator has no deck_options metadata, do not restrict
+        if not investigator.deck_options:
+            return True
+
+        # 3. Evaluate deck_options (negative 'not: true' rules disqualify immediately; must match >= 1 positive rule)
+        matched_positive = False
+        for opt in investigator.deck_options:
+            is_negated = opt.get("not") is True
+            opt_criteria = {k: v for k, v in opt.items() if k != "not"} if is_negated else opt
+            if cls._card_matches_deck_option(card, opt_criteria):
+                if is_negated:
+                    return False
+                matched_positive = True
+
+        return matched_positive
+
+    def _resolve_investigator_record(
+        self,
+        investigator: Optional[Union[InvestigatorMatchResult, ArkhamCardRecord, str]],
+        all_cards: Sequence[ArkhamCardRecord],
+    ) -> Optional[ArkhamCardRecord]:
+        """Resolve an InvestigatorMatchResult, ArkhamCardRecord, or name/code string to an ArkhamCardRecord."""
+        if investigator is None:
+            return None
+        if isinstance(investigator, ArkhamCardRecord):
+            return investigator
+
+        inv_cards = [c for c in all_cards if c.is_investigator]
+        if isinstance(investigator, InvestigatorMatchResult):
+            if not investigator.matched:
+                return None
+            if investigator.card_code:
+                for c in inv_cards:
+                    if c.code == investigator.card_code:
+                        return c
+            if investigator.official_name:
+                target_norm = _normalize_text(investigator.official_name)
+                for c in inv_cards:
+                    if _normalize_text(c.real_name) == target_norm:
+                        return c
+            return None
+
+        if isinstance(investigator, str) and investigator.strip():
+            raw = investigator.strip()
+            for c in inv_cards:
+                if c.code == raw:
+                    return c
+            match_res = self.match_investigator(raw)
+            if match_res.matched and match_res.card_code:
+                for c in inv_cards:
+                    if c.code == match_res.card_code:
+                        return c
+        return None
+
     def match_investigator(self, investigator_name: str) -> InvestigatorMatchResult:
         """Find the best ArkhamDB investigator card matching investigator_name."""
         raw_clean = investigator_name.strip()
@@ -134,15 +280,29 @@ class ArkhamFuzzyCardMatcher(ICardMatcher):
             similarity_score=best_score,
         )
 
-    def match_intent(self, intent: ExtractedCardIntent) -> CardMatchResult:
-        """Find the best ArkhamDB card ID (code) matching name and XP level."""
-        cards = [c for c in self._repository.load_cards() if not c.is_investigator]
-        if not cards:
+    def match_intent(
+        self,
+        intent: ExtractedCardIntent,
+        investigator: Optional[Union[InvestigatorMatchResult, ArkhamCardRecord, str]] = None,
+    ) -> CardMatchResult:
+        """Find the best ArkhamDB card ID (code) matching name, XP level, and investigator deckbuilding rules."""
+        all_records = self._repository.load_cards()
+        all_player_cards = [c for c in all_records if not c.is_investigator]
+        if not all_player_cards:
             logger.warning("Card database is empty; cannot match '%s'.", intent.nome)
             return CardMatchResult(intent=intent, matched=False, similarity_score=0)
 
         query_norm = _normalize_text(intent.nome)
         target_xp = intent.nivel
+
+        inv_record = self._resolve_investigator_record(investigator, all_records)
+        if inv_record is not None and inv_record.deck_options:
+            legal_cards = [
+                c for c in all_player_cards if self.is_card_legal_for_investigator(c, inv_record)
+            ]
+            cards = legal_cards if legal_cards else all_player_cards
+        else:
+            cards = all_player_cards
 
         exact_xp_scored: List[Tuple[int, ArkhamCardRecord]] = []
         all_scored: List[Tuple[int, ArkhamCardRecord]] = []
@@ -156,15 +316,48 @@ class ArkhamFuzzyCardMatcher(ICardMatcher):
         exact_xp_scored.sort(key=lambda item: self._candidate_sort_key(item, target_xp))
         all_scored.sort(key=lambda item: self._candidate_sort_key(item, target_xp))
 
+        # Guard against substituting a random weak legal card when the user explicitly named an off-class card
+        if inv_record is not None and inv_record.deck_options and all_scored:
+            best_legal_score, best_legal_card = all_scored[0]
+            if best_legal_score < 80:
+                illegal_scored = [
+                    (self._compute_similarity(query_norm, c), c)
+                    for c in all_player_cards
+                    if not self.is_card_legal_for_investigator(c, inv_record)
+                ]
+                illegal_scored.sort(key=lambda item: self._candidate_sort_key(item, target_xp))
+                if illegal_scored and illegal_scored[0][0] >= 92:
+                    illegal_score, illegal_card = illegal_scored[0]
+                    logger.info(
+                        "Card '%s' matched '%s' (ID: %s, %d%%) which is illegal for investigator '%s' (%s); "
+                        "rejecting weak legal fallback '%s' (%d%%).",
+                        intent.nome,
+                        illegal_card.real_name,
+                        illegal_card.code,
+                        illegal_score,
+                        inv_record.real_name,
+                        inv_record.code,
+                        best_legal_card.real_name,
+                        best_legal_score,
+                    )
+                    return CardMatchResult(
+                        intent=intent,
+                        matched=False,
+                        similarity_score=best_legal_score,
+                    )
+
         # Smart XP selection:
-        # If target_xp == 0 (default when user didn't state XP) and exact_xp has only a weak match (< 88%),
-        # while all_scored has a near-exact name match (>= 92% and >= 15 points higher), prefer all_scored!
-        # Example: "Counterspell" (XP 2 only) vs "Counterpunch" (XP 0, 67%).
+        # When target_xp == 0 (default when user didn't state XP) and a higher-XP card has a strictly
+        # better name match (e.g. "I've had worse..." at 100% XP 2 vs "You've had worse..." at 87% XP 0,
+        # or "Counterspell" at 100% XP 2 vs "Counterpunch" at 67% XP 0), prefer the higher-XP card!
         use_exact_xp = bool(exact_xp_scored and exact_xp_scored[0][0] >= self._threshold)
         if use_exact_xp and target_xp == 0 and all_scored:
             exact_score = exact_xp_scored[0][0]
             any_xp_score = all_scored[0][0]
-            if exact_score < 88 and any_xp_score >= 92 and (any_xp_score - exact_score) >= 15:
+            if any_xp_score > exact_score and (
+                any_xp_score >= 95
+                or (exact_score < 90 and any_xp_score >= 90 and (any_xp_score - exact_score) >= 8)
+            ):
                 logger.info(
                     "Upgrading XP=0 weak match '%s' (%d%%) to exact-name higher-XP card '%s' (ID: %s, XP: %d, %d%%)",
                     exact_xp_scored[0][1].real_name,
@@ -248,12 +441,13 @@ class ArkhamFuzzyCardMatcher(ICardMatcher):
     def match_all(
         self,
         intents: Sequence[ExtractedCardIntent],
+        investigator: Optional[Union[InvestigatorMatchResult, ArkhamCardRecord, str]] = None,
         model_used: str | None = None,
     ) -> List[CardMatchResult]:
-        """Match a list of extracted intents against ArkhamDB."""
+        """Match a list of extracted intents against ArkhamDB, enforcing investigator deckbuilding rules if present."""
         results: List[CardMatchResult] = []
         for intent in intents:
-            match_res = self.match_intent(intent)
+            match_res = self.match_intent(intent, investigator=investigator)
             if model_used:
                 match_res = replace(match_res, model_used=model_used)
             results.append(match_res)

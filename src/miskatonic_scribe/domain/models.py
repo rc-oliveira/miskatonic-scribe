@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Any, List, Optional, Tuple
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -65,7 +66,7 @@ class ExtractedDeckPayload(BaseModel):
 
 @dataclass(frozen=True)
 class ArkhamCardRecord:
-    """Normalized ArkhamDB card entry used for matching."""
+    """Normalized ArkhamDB card entry used for matching and deckbuilding validation."""
 
     code: str
     real_name: str
@@ -74,9 +75,19 @@ class ArkhamCardRecord:
     subname: Optional[str] = None
     pack_code: Optional[str] = None
     faction_code: Optional[str] = None
+    faction2_code: Optional[str] = None
+    faction3_code: Optional[str] = None
     type_code: Optional[str] = None
     duplicate_of_code: Optional[str] = None
     octgn_id: Optional[str] = None
+    real_traits: Optional[str] = None
+    traits: Optional[str] = None
+    real_text: Optional[str] = None
+    real_slot: Optional[str] = None
+    permanent: bool = False
+    restrictions_investigators: Tuple[str, ...] = ()
+    deck_options: Tuple[dict[str, Any], ...] = ()
+    deck_requirements_cards: Tuple[str, ...] = ()
 
     @property
     def is_reprint(self) -> bool:
@@ -87,6 +98,25 @@ class ArkhamCardRecord:
     def is_investigator(self) -> bool:
         """Return True if this record represents an investigator card."""
         return (self.type_code or "").lower() == "investigator"
+
+    @property
+    def factions(self) -> Tuple[str, ...]:
+        """Return all lowercase faction codes associated with this card (supporting multi-class cards)."""
+        return tuple(
+            f.strip().lower()
+            for f in (self.faction_code, self.faction2_code, self.faction3_code)
+            if f and f.strip()
+        )
+
+    @property
+    def normalized_traits(self) -> Tuple[str, ...]:
+        """Return lowercase individual traits from real_traits and localized traits."""
+        combined = f"{self.real_traits or ''}. {self.traits or ''}".lower()
+        return tuple(
+            part.strip()
+            for part in re.split(r"[.,;/]+", combined)
+            if part.strip()
+        )
 
     @property
     def display_name(self) -> str:

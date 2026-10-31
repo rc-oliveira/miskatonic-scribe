@@ -74,11 +74,7 @@ def bootstrap_application(config: AppConfig | None = None) -> MiskatonicTelegram
         transcription_mode=cfg.transcription_mode,
     )
     collection_repo = JsonUserCollectionRepository(db_path=cfg.user_collection_db_path)
-    deck_exporter = ArkhamDBDeckExporter(
-        username=cfg.arkhamdb_username,
-        password=cfg.arkhamdb_password,
-        access_token=cfg.arkhamdb_access_token,
-    )
+    deck_exporter = ArkhamDBDeckExporter()
 
     return MiskatonicTelegramBot(
         audio_storage=audio_storage,

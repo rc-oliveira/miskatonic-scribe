@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from pathlib import Path
-from typing import Any, Callable, List, Optional, Sequence
+from typing import Any, Callable, List, Optional, Sequence, Tuple
 
 import requests
 
@@ -106,7 +107,58 @@ class ArkhamDBCardRepository(ICardRepository):
         return self._cards_path
 
     @staticmethod
-    def _to_record(raw: dict[str, Any]) -> Optional[ArkhamCardRecord]:
+    def _parse_restrictions_investigators(raw_restrictions: Any) -> Tuple[str, ...]:
+        """Extract restricted investigator codes from ArkhamDB 'restrictions' field."""
+        if not raw_restrictions:
+            return ()
+        if isinstance(raw_restrictions, dict):
+            inv_map = raw_restrictions.get("investigator")
+            if isinstance(inv_map, dict):
+                return tuple(str(k).strip() for k in inv_map.keys() if str(k).strip())
+            if isinstance(inv_map, list):
+                return tuple(str(k).strip() for k in inv_map if str(k).strip())
+        if isinstance(raw_restrictions, str):
+            matches = re.findall(r"investigator:([0-9a-zA-Z]+)", raw_restrictions)
+            return tuple(matches)
+        return ()
+
+    @staticmethod
+    def _parse_deck_options(raw_options: Any) -> Tuple[dict[str, Any], ...]:
+        """Parse ArkhamDB investigator 'deck_options' array."""
+        if not raw_options:
+            return ()
+        if isinstance(raw_options, str):
+            try:
+                raw_options = json.loads(raw_options)
+            except ValueError:
+                return ()
+        if isinstance(raw_options, list):
+            return tuple(opt for opt in raw_options if isinstance(opt, dict))
+        return ()
+
+    @staticmethod
+    def _parse_deck_requirements_cards(raw_reqs: Any) -> Tuple[str, ...]:
+        """Extract signature/required card codes from ArkhamDB investigator 'deck_requirements'."""
+        if not raw_reqs:
+            return ()
+        if isinstance(raw_reqs, dict):
+            card_map = raw_reqs.get("card")
+            if isinstance(card_map, dict):
+                codes: List[str] = []
+                for k, v in card_map.items():
+                    if str(k).strip():
+                        codes.append(str(k).strip())
+                    if isinstance(v, dict):
+                        for sub_k in v.keys():
+                            if str(sub_k).strip() and str(sub_k).strip() not in codes:
+                                codes.append(str(sub_k).strip())
+                return tuple(codes)
+        if isinstance(raw_reqs, str):
+            return tuple(re.findall(r"\b\d{5}[a-z]?\b", raw_reqs))
+        return ()
+
+    @classmethod
+    def _to_record(cls, raw: dict[str, Any]) -> Optional[ArkhamCardRecord]:
         """Convert a raw ArkhamDB JSON object into an ArkhamCardRecord (player cards and investigators only)."""
         code = str(raw.get("code", "")).strip()
         real_name = str(raw.get("real_name") or raw.get("name") or "").strip()
@@ -115,7 +167,7 @@ class ArkhamDBCardRepository(ICardRepository):
         if not code or not real_name:
             return None
 
-        # Exclude scenario/encounter cards (e.g. mythos treacheries like "You've had worse...")
+        # Exclude scenario/encounter cards (e.g. mythos treacheries)
         if raw.get("encounter_code") or str(raw.get("faction_code", "")).lower() == "mythos":
             return None
         type_code = str(raw.get("type_code", "")).lower()
@@ -137,6 +189,11 @@ class ArkhamDBCardRepository(ICardRepository):
         octgn_id = raw.get("octgn_id")
         octgn_str = str(octgn_id).strip() if octgn_id else None
 
+        real_traits = raw.get("real_traits")
+        traits = raw.get("traits")
+        real_text = raw.get("real_text") or raw.get("text")
+        real_slot = raw.get("real_slot") or raw.get("slot")
+
         return ArkhamCardRecord(
             code=code,
             real_name=real_name,
@@ -145,9 +202,19 @@ class ArkhamDBCardRepository(ICardRepository):
             subname=subname_str,
             pack_code=raw.get("pack_code"),
             faction_code=raw.get("faction_code"),
+            faction2_code=raw.get("faction2_code"),
+            faction3_code=raw.get("faction3_code"),
             type_code=raw.get("type_code"),
             duplicate_of_code=duplicate_str,
             octgn_id=octgn_str,
+            real_traits=str(real_traits).strip() if real_traits else None,
+            traits=str(traits).strip() if traits else None,
+            real_text=str(real_text).strip() if real_text else None,
+            real_slot=str(real_slot).strip() if real_slot else None,
+            permanent=bool(raw.get("permanent", False)),
+            restrictions_investigators=cls._parse_restrictions_investigators(raw.get("restrictions")),
+            deck_options=cls._parse_deck_options(raw.get("deck_options")),
+            deck_requirements_cards=cls._parse_deck_requirements_cards(raw.get("deck_requirements")),
         )
 
     def load_cards(self, force_reload: bool = False) -> Sequence[ArkhamCardRecord]:

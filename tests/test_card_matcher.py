@@ -153,6 +153,54 @@ def test_matcher_upgrades_xp0_weak_match_to_exact_name_higher_xp(cards_json_file
     assert res.matched_xp == 2
 
 
+def test_matcher_never_swaps_ive_had_worse_for_illegal_youve_had_worse(cards_json_file: Path) -> None:
+    """'I've had worse...' (XP 0 default) must match 'I've had worse…' (ID 02261, Guardian XP 2)
+    instead of '"You've had worse..."' (ID 11054, Seeker XP 0), and for Diana Stanley (Guardian 0-2)
+    must also exclude the illegal Guardian XP 4 variant (02107)."""
+    repo = ArkhamDBCardRepository(cards_path=cards_json_file)
+    matcher = ArkhamFuzzyCardMatcher(repository=repo, similarity_threshold=65)
+    diana = matcher.match_investigator("Diana Stanley")
+    assert diana.matched is True
+    assert diana.card_code == "05004"
+
+    # 1. With Diana Stanley as investigator: matches legal Guardian XP 2 (02261) and excludes XP 4 (02107) and Seeker (11054)
+    res_diana = matcher.match_intent(
+        ExtractedCardIntent(nome="I've had worse...", nivel=0, quantidade=2),
+        investigator=diana,
+    )
+    assert res_diana.matched is True
+    assert res_diana.card_code == "02261"
+    assert res_diana.official_name == "I've had worse…"
+    assert res_diana.matched_xp == 2
+    assert all(alt.code != "02107" for alt in res_diana.alternatives)
+
+    # 2. Even if LLM extracted '"You've had worse..."', Diana Stanley cannot take Seeker cards,
+    # so matcher resolves to the legal Guardian XP 2 card 'I've had worse…' (02261)
+    res_disambiguated = matcher.match_intent(
+        ExtractedCardIntent(nome='"You\'ve had worse..."', nivel=0, quantidade=2),
+        investigator=diana,
+    )
+    assert res_disambiguated.matched is True
+    assert res_disambiguated.card_code == "02261"
+    assert res_disambiguated.official_name == "I've had worse…"
+    assert res_disambiguated.matched_xp == 2
+
+    # 3. Even without investigator context, exact name 'I've had worse...' (100%) beats '"You've had worse..."' (87%)
+    res_no_inv = matcher.match_intent(
+        ExtractedCardIntent(nome="I've had worse...", nivel=0, quantidade=2),
+    )
+    assert res_no_inv.matched is True
+    assert res_no_inv.card_code == "02261"
+    assert res_no_inv.official_name == "I've had worse…"
+
+    # 4. Explicitly off-class card with no close legal match ('Dr. Milan Christopher', Seeker) is rejected for Diana
+    res_illegal = matcher.match_intent(
+        ExtractedCardIntent(nome="Dr. Milan Christopher", nivel=0, quantidade=1),
+        investigator=diana,
+    )
+    assert res_illegal.matched is False
+
+
 def test_matcher_matches_investigator_diana_stanley(cards_json_file: Path) -> None:
     """Investigator matcher must identify Diana Stanley (ID 05004)."""
     repo = ArkhamDBCardRepository(cards_path=cards_json_file)
@@ -163,4 +211,3 @@ def test_matcher_matches_investigator_diana_stanley(cards_json_file: Path) -> No
     assert inv.card_code == "05004"
     assert inv.official_name == "Diana Stanley"
     assert "05004" in inv.format_telegram_line()
-

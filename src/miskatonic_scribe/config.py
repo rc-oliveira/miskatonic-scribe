@@ -128,9 +128,6 @@ class AppConfig:
     arkhamdb_cards_path: Path = Path("cards.json")
     arkhamdb_api_url: str = "https://arkhamdb.com/api/public/cards/"
     arkhamdb_refresh_days: int = 30
-    arkhamdb_username: str = ""
-    arkhamdb_password: str = ""
-    arkhamdb_access_token: str = ""
     fuzzy_match_threshold: int = 65
     user_collection_db_path: Path = Path("data/user_collections.json")
     log_level: str = "INFO"
@@ -189,9 +186,6 @@ class AppConfig:
                 "ARKHAMDB_API_URL", "https://arkhamdb.com/api/public/cards/"
             ).strip(),
             arkhamdb_refresh_days=refresh_days,
-            arkhamdb_username=os.getenv("ARKHAMDB_USERNAME", "").strip(),
-            arkhamdb_password=os.getenv("ARKHAMDB_PASSWORD", "").strip(),
-            arkhamdb_access_token=os.getenv("ARKHAMDB_ACCESS_TOKEN", "").strip(),
             fuzzy_match_threshold=threshold,
             user_collection_db_path=Path(
                 os.getenv("USER_COLLECTION_DB_PATH", "data/user_collections.json")

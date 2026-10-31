@@ -44,16 +44,29 @@ class CardRegistrationPipeline:
         payload: ExtractedDeckPayload,
         model_used: str,
         fallback_text: str,
+        context_investigator: Optional[InvestigatorMatchResult] = None,
     ) -> PipelineExecutionResult:
         """Match investigator and cards from an ExtractedDeckPayload."""
         investigator_match: Optional[InvestigatorMatchResult] = None
         if payload.investigador:
             investigator_match = self._matcher.match_investigator(payload.investigador)
+        elif context_investigator is not None:
+            investigator_match = context_investigator
 
         if isinstance(self._matcher, ArkhamFuzzyCardMatcher):
-            match_results = self._matcher.match_all(payload.cartas, model_used=model_used)
+            match_results = self._matcher.match_all(
+                payload.cartas,
+                investigator=investigator_match,
+                model_used=model_used,
+            )
         else:
-            match_results = self._matcher.match_all(payload.cartas)
+            try:
+                match_results = self._matcher.match_all(
+                    payload.cartas,
+                    investigator=investigator_match,
+                )
+            except TypeError:
+                match_results = self._matcher.match_all(payload.cartas)
 
         transcribed_text = (payload.transcricao or fallback_text or "").strip()
         return PipelineExecutionResult(
@@ -105,7 +118,11 @@ class CardRegistrationPipeline:
         )
         return result
 
-    def process_text(self, user_text: str) -> PipelineExecutionResult:
+    def process_text(
+        self,
+        user_text: str,
+        context_investigator: Optional[InvestigatorMatchResult] = None,
+    ) -> PipelineExecutionResult:
         """Process a text message (new deck list or correction/addition to a pending batch)."""
         cleaned_text = user_text.strip()
         logger.info("Starting registration pipeline for text message (%d chars)", len(cleaned_text))
@@ -113,7 +130,12 @@ class CardRegistrationPipeline:
             transcribed_text=cleaned_text,
             audio_path=None,
         )
-        result = self._build_execution_result(payload, model_used, cleaned_text)
+        result = self._build_execution_result(
+            payload,
+            model_used,
+            cleaned_text,
+            context_investigator=context_investigator,
+        )
         logger.info(
             "Text pipeline completed: investigator=%r, %d card(s), %d removal(s) via '%s'.",
             result.investigator_match.official_name if result.investigator_match else None,

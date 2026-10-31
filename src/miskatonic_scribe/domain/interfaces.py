@@ -73,11 +73,19 @@ class ICardMatcher(ABC):
     """Interface for fuzzy-matching LLM intents and investigators against ArkhamDB card records."""
 
     @abstractmethod
-    def match_intent(self, intent: ExtractedCardIntent) -> CardMatchResult:
+    def match_intent(
+        self,
+        intent: ExtractedCardIntent,
+        investigator: Optional[InvestigatorMatchResult] = None,
+    ) -> CardMatchResult:
         """Match a single extracted card intent against ArkhamDB."""
 
     @abstractmethod
-    def match_all(self, intents: Sequence[ExtractedCardIntent]) -> List[CardMatchResult]:
+    def match_all(
+        self,
+        intents: Sequence[ExtractedCardIntent],
+        investigator: Optional[InvestigatorMatchResult] = None,
+    ) -> List[CardMatchResult]:
         """Match a sequence of extracted card intents against ArkhamDB."""
 
     def match_investigator(self, investigator_name: str) -> InvestigatorMatchResult:

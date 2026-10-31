@@ -11,7 +11,7 @@ import pytest
 
 @pytest.fixture
 def sample_arkhamdb_payload() -> List[dict[str, Any]]:
-    """Representative ArkhamDB cards payload including investigators, XP levels, reprints, and subtitles."""
+    """Representative ArkhamDB cards payload including investigators, deck_options, XP levels, reprints, and subtitles."""
     return [
         {
             "code": "05004",
@@ -23,6 +23,20 @@ def sample_arkhamdb_payload() -> List[dict[str, Any]]:
             "faction_code": "mystic",
             "type_code": "investigator",
             "octgn_id": "diana-guid-05004",
+            "deck_requirements": {
+                "size": 35,
+                "card": {
+                    "05013": {"05013": "05013"},
+                    "05014": {"05014": "05014"},
+                    "05015": {"05015": "05015"},
+                },
+                "random": [{"target": "subtype", "value": "basicweakness"}],
+            },
+            "deck_options": [
+                {"faction": ["mystic"], "level": {"min": 0, "max": 5}},
+                {"faction": ["guardian"], "level": {"min": 0, "max": 2}},
+                {"faction": ["neutral"], "level": {"min": 0, "max": 5}},
+            ],
         },
         {
             "code": "01020",
@@ -108,6 +122,15 @@ def sample_arkhamdb_payload() -> List[dict[str, Any]]:
             "xp": 2,
             "pack_code": "dwl",
             "faction_code": "guardian",
+            "type_code": "event",
+        },
+        {
+            "code": "11054",
+            "name": '"You\'ve had worse..."',
+            "real_name": '"You\'ve had worse..."',
+            "xp": 0,
+            "pack_code": "tdc",
+            "faction_code": "seeker",
             "type_code": "event",
         },
         {

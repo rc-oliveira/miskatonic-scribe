@@ -1,4 +1,4 @@
-"""Telegram Bot v20+ handlers for voice, audio, text messages, .dek export, and ArkhamDB publishing."""
+"""Telegram Bot v20+ handlers for voice, audio, text messages, and .o8d export."""
 
 from __future__ import annotations
 
@@ -42,10 +42,7 @@ from miskatonic_scribe.domain.models import (
     InvestigatorMatchResult,
     PipelineExecutionResult,
 )
-from miskatonic_scribe.infrastructure.arkhamdb_deck_exporter import (
-    ArkhamDBDeckExporter,
-    ArkhamDBPublishError,
-)
+from miskatonic_scribe.infrastructure.arkhamdb_deck_exporter import ArkhamDBDeckExporter
 from miskatonic_scribe.services.registration_pipeline import CardRegistrationPipeline
 
 logger = logging.getLogger(__name__)
@@ -54,7 +51,7 @@ PendingBatchItem = Union[PipelineExecutionResult, List[CardMatchResult]]
 
 
 class MiskatonicTelegramBot:
-    """Telegram Bot controller encapsulating voice, text, confirmation, and ArkhamDB export handlers."""
+    """Telegram Bot controller encapsulating voice, text, confirmation, and ArkhamDB .o8d export handlers."""
 
     def __init__(
         self,
@@ -462,11 +459,25 @@ class MiskatonicTelegramBot:
 
         status_msg = await update.message.reply_text("⏳ Processando mensagem de texto...")
 
+        pending_batches: Dict[str, PendingBatchItem] = context.user_data.setdefault(
+            "pending_batches", {}
+        )
+        active_batch_id: Optional[str] = context.user_data.get("active_batch_id")
+        context_investigator: Optional[InvestigatorMatchResult] = None
+        if active_batch_id and active_batch_id in pending_batches:
+            existing_peek = pending_batches[active_batch_id]
+            if isinstance(existing_peek, PipelineExecutionResult):
+                context_investigator = existing_peek.investigator_match
+
         try:
             if self._use_thread_pool:
-                delta_result = await asyncio.to_thread(self._pipeline.process_text, raw_text)
+                delta_result = await asyncio.to_thread(
+                    self._pipeline.process_text,
+                    raw_text,
+                    context_investigator,
+                )
             else:
-                delta_result = self._pipeline.process_text(raw_text)
+                delta_result = self._pipeline.process_text(raw_text, context_investigator)
         except LLMExtractionError as exc:
             logger.error("LLMExtractionError on text message for user_id=%s: %s", user_id, exc, exc_info=True)
             await status_msg.edit_text(f"🤖 Falha ao processar texto via Gemini: {exc}")
@@ -479,11 +490,6 @@ class MiskatonicTelegramBot:
             logger.exception("Unexpected error in text pipeline for user_id=%s: %s", user_id, exc)
             await status_msg.edit_text(f"❌ Erro inesperado ao processar texto: {exc}")
             return
-
-        pending_batches: Dict[str, PendingBatchItem] = context.user_data.setdefault(
-            "pending_batches", {}
-        )
-        active_batch_id: Optional[str] = context.user_data.get("active_batch_id")
 
         if active_batch_id and active_batch_id in pending_batches:
             existing_item = pending_batches.pop(active_batch_id)
@@ -534,7 +540,7 @@ class MiskatonicTelegramBot:
         update: Update,
         context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
-        """Process inline button callback (Confirmar / Cancelar), export .dek, and optionally publish to ArkhamDB."""
+        """Process inline button callback (Confirmar / Cancelar) and export .o8d file for ArkhamDB."""
         query = update.callback_query
         if query is None or not query.data:
             return
@@ -610,27 +616,6 @@ class MiskatonicTelegramBot:
             )
             date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             deck_name = f"Miskatonic Scribe - {inv_label} ({date_str})"
-
-            # Optional direct publication to ArkhamDB if credentials are configured in .env
-            if self._deck_exporter.has_credentials and confirmed_lines:
-                try:
-                    if self._use_thread_pool:
-                        deck_url = await asyncio.to_thread(
-                            self._deck_exporter.publish_deck,
-                            deck_name,
-                            matches,
-                            investigator,
-                        )
-                    else:
-                        deck_url = self._deck_exporter.publish_deck(
-                            deck_name,
-                            matches,
-                            investigator,
-                        )
-                    summary_parts.append(f"\n🌐 *Deck criado no ArkhamDB:* {deck_url}")
-                except ArkhamDBPublishError as exc:
-                    logger.warning("ArkhamDB direct publish failed: %s", exc)
-                    summary_parts.append(f"\n⚠️ *Aviso ArkhamDB:* {exc}")
 
             await query.edit_message_text(
                 "\n".join(summary_parts),
