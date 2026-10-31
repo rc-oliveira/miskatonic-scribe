@@ -24,7 +24,7 @@ def test_generate_octgn_dek_includes_investigator_and_cards() -> None:
         matched=True,
         card_code="05004",
         official_name="Diana Stanley",
-        octgn_id="diana-guid-05004",
+        octgn_id="guid1-05004:guid2-05004",
         similarity_score=100,
     )
     matches = [
@@ -34,6 +34,7 @@ def test_generate_octgn_dek_includes_investigator_and_cards() -> None:
             card_code="02066",
             official_name="Shrivelling",
             matched_xp=3,
+            type_code="asset",
             octgn_id="shrivelling-guid-02066",
             similarity_score=100,
         ),
@@ -43,6 +44,7 @@ def test_generate_octgn_dek_includes_investigator_and_cards() -> None:
             card_code="01020",
             official_name="Machete",
             matched_xp=0,
+            type_code="asset",
             octgn_id="machete-guid-01020",
             similarity_score=100,
         ),
@@ -54,8 +56,10 @@ def test_generate_octgn_dek_includes_investigator_and_cards() -> None:
         investigator=investigator,
     )
 
-    assert '<?xml version="1.0" encoding="utf-8"?>' in xml_str
-    assert '<card qty="1" id="diana-guid-05004">Diana Stanley</card>' in xml_str
+    assert '<?xml version="1.0" encoding="utf-8" standalone="yes"?>' in xml_str
+    assert '<deck game="a6d114c7-2e2a-4896-ad8c-0330605c90bf" sleeveid="0">' in xml_str
+    assert '<card qty="1" id="guid1-05004">Diana Stanley</card>' in xml_str
+    assert '<card qty="1" id="guid2-05004">Diana Stanley</card>' in xml_str
     assert '<card qty="2" id="shrivelling-guid-02066">Shrivelling</card>' in xml_str
     assert '<card qty="1" id="machete-guid-01020">Machete</card>' in xml_str
 

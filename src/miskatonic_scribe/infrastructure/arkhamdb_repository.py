@@ -107,12 +107,19 @@ class ArkhamDBCardRepository(ICardRepository):
 
     @staticmethod
     def _to_record(raw: dict[str, Any]) -> Optional[ArkhamCardRecord]:
-        """Convert a raw ArkhamDB JSON object into an ArkhamCardRecord."""
+        """Convert a raw ArkhamDB JSON object into an ArkhamCardRecord (player cards and investigators only)."""
         code = str(raw.get("code", "")).strip()
         real_name = str(raw.get("real_name") or raw.get("name") or "").strip()
         name = str(raw.get("name") or real_name).strip()
 
         if not code or not real_name:
+            return None
+
+        # Exclude scenario/encounter cards (e.g. mythos treacheries like "You've had worse...")
+        if raw.get("encounter_code") or str(raw.get("faction_code", "")).lower() == "mythos":
+            return None
+        type_code = str(raw.get("type_code", "")).lower()
+        if type_code in {"scenario", "agenda", "act", "location", "enemy"}:
             return None
 
         raw_xp = raw.get("xp", 0)

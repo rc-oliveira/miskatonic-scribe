@@ -239,6 +239,7 @@ class ArkhamFuzzyCardMatcher(ICardMatcher):
             official_name=best_card.real_name,
             matched_xp=best_card.xp,
             subname=best_card.subname,
+            type_code=best_card.type_code,
             octgn_id=best_card.octgn_id,
             similarity_score=best_score,
             alternatives=alternatives,

@@ -550,7 +550,7 @@ def test_telegram_text_correction_merges_pending_batch_and_exports_dek(
     cb_update.callback_query.message.reply_document.assert_awaited_once()
     doc_kwargs = cb_update.callback_query.message.reply_document.call_args.kwargs
     assert doc_kwargs["filename"].startswith("deck_diana_stanley_")
-    assert doc_kwargs["filename"].endswith(".dek")
+    assert doc_kwargs["filename"].endswith(".o8d")
     dek_bytes = doc_kwargs["document"].getvalue().decode("utf-8")
     assert "Diana Stanley" in dek_bytes
     assert "I've had worse…" in dek_bytes

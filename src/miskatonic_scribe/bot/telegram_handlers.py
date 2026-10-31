@@ -637,7 +637,7 @@ class MiskatonicTelegramBot:
                 parse_mode="Markdown",
             )
 
-            # Generate and send .dek (OCTGN XML) file for 1-click import on https://arkhamdb.com/decks
+            # Generate and send .o8d (OCTGN XML) file for 1-click import on https://arkhamdb.com/decks
             if confirmed_lines and getattr(query, "message", None) is not None:
                 reply_doc = getattr(query.message, "reply_document", None)
                 if callable(reply_doc):
@@ -648,14 +648,14 @@ class MiskatonicTelegramBot:
                             investigator=investigator,
                         )
                         slug = re.sub(r"[^a-z0-9]+", "_", inv_label.lower()).strip("_") or "arkham"
-                        filename = f"deck_{slug}_{date_str}.dek"
+                        filename = f"deck_{slug}_{date_str}.o8d"
                         bio = io.BytesIO(dek_content.encode("utf-8"))
                         bio.name = filename
                         res = reply_doc(
                             document=bio,
                             filename=filename,
                             caption=(
-                                "📦 Arquivo `.dek` gerado! Você pode importá-lo diretamente em "
+                                "📦 Arquivo `.o8d` (OCTGN) gerado! Você pode importá-lo diretamente em "
                                 "https://arkhamdb.com/decks clicando em *Import Deck*."
                             ),
                             parse_mode="Markdown",
@@ -663,7 +663,7 @@ class MiskatonicTelegramBot:
                         if inspect.isawaitable(res):
                             await res
                     except Exception as exc:
-                        logger.warning("Could not send .dek attachment in Telegram: %s", exc)
+                        logger.warning("Could not send .o8d attachment in Telegram: %s", exc)
 
     async def global_error_handler(
         self,

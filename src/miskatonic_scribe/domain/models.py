@@ -140,6 +140,7 @@ class CardMatchResult:
     official_name: Optional[str] = None
     matched_xp: Optional[int] = None
     subname: Optional[str] = None
+    type_code: Optional[str] = None
     octgn_id: Optional[str] = None
     similarity_score: int = 0
     model_used: Optional[str] = None
