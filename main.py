@@ -20,6 +20,7 @@ from miskatonic_scribe.infrastructure.arkhamdb_deck_exporter import ArkhamDBDeck
 from miskatonic_scribe.infrastructure.arkhamdb_repository import ArkhamDBCardRepository
 from miskatonic_scribe.infrastructure.audio_storage import LocalAudioStorageManager
 from miskatonic_scribe.infrastructure.gemini_extractor import GeminiCardIntentExtractor
+from miskatonic_scribe.infrastructure.iam_managers import ConfigManager, UserManager
 from miskatonic_scribe.infrastructure.user_collection_repository import (
     JsonUserCollectionRepository,
 )
@@ -32,17 +33,30 @@ logger = logging.getLogger(__name__)
 
 
 def bootstrap_application(config: AppConfig | None = None) -> MiskatonicTelegramBot:
-    """Wire all dependencies following Dependency Inversion and warm up ArkhamDB cache."""
+    """Wire all dependencies following Dependency Inversion and warm up ArkhamDB & IAM caches."""
     cfg = config or AppConfig.from_env()
     configure_logging(level=cfg.log_level, log_file_path=cfg.log_file_path)
 
+    user_manager = UserManager.get_instance(file_path=cfg.users_file_path)
+    config_manager = ConfigManager.get_instance(
+        file_path=cfg.config_file_path,
+        defaults={
+            "transcription_mode": cfg.transcription_mode,
+            "whisper_model_name": cfg.whisper_model_name,
+            "fuzzy_match_threshold": cfg.fuzzy_match_threshold,
+            "arkhamdb_refresh_days": cfg.arkhamdb_refresh_days,
+        },
+    )
+
     logger.info(
         "Initializing Miskatonic Scribe | Mode: %s | Primary LLM: %s | Fallbacks: %s | "
-        "Allowed User IDs: %s | Telegram Timeouts (connect=%.1fs, read=%.1fs, retries=%d) | Log File: %s",
+        "Users DB: %s (%d approved) | Config DB: %s | Telegram Timeouts (connect=%.1fs, read=%.1fs, retries=%d) | Log File: %s",
         cfg.transcription_mode,
         cfg.gemini.primary_model,
         cfg.gemini.fallback_models,
-        sorted(cfg.allowed_user_ids),
+        cfg.users_file_path,
+        len(user_manager.get_users_by_status("approved")),
+        cfg.config_file_path,
         cfg.telegram_connect_timeout,
         cfg.telegram_read_timeout,
         cfg.telegram_download_retries,
@@ -80,9 +94,10 @@ def bootstrap_application(config: AppConfig | None = None) -> MiskatonicTelegram
         audio_storage=audio_storage,
         pipeline=pipeline,
         collection_repo=collection_repo,
+        user_manager=user_manager,
+        config_manager=config_manager,
         card_repo=card_repository,
         deck_exporter=deck_exporter,
-        allowed_user_ids=cfg.allowed_user_ids,
         connect_timeout=cfg.telegram_connect_timeout,
         read_timeout=cfg.telegram_read_timeout,
         download_retries=cfg.telegram_download_retries,
