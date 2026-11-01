@@ -1,8 +1,9 @@
-"""Telegram Bot v20+ handlers for voice, audio, text messages, and .o8d export."""
+"""Telegram Bot v20+ handlers for voice, audio, text messages, IAM onboarding, Admin Panel, and .o8d export."""
 
 from __future__ import annotations
 
 import asyncio
+import functools
 import inspect
 import io
 import logging
@@ -11,7 +12,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Collection, Dict, FrozenSet, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -43,6 +44,7 @@ from miskatonic_scribe.domain.models import (
     PipelineExecutionResult,
 )
 from miskatonic_scribe.infrastructure.arkhamdb_deck_exporter import ArkhamDBDeckExporter
+from miskatonic_scribe.infrastructure.iam_managers import ConfigManager, UserManager
 from miskatonic_scribe.services.registration_pipeline import CardRegistrationPipeline
 
 logger = logging.getLogger(__name__)
@@ -50,55 +52,24 @@ logger = logging.getLogger(__name__)
 PendingBatchItem = Union[PipelineExecutionResult, List[CardMatchResult]]
 
 
-class MiskatonicTelegramBot:
-    """Telegram Bot controller encapsulating voice, text, confirmation, and ArkhamDB .o8d export handlers."""
+def require_approved(func: Callable[..., Any]) -> Callable[..., Any]:
+    """Decorator that intercepts messages/callbacks and verifies status == 'approved' in UserManager."""
 
-    def __init__(
-        self,
-        audio_storage: IAudioStorageManager,
-        pipeline: CardRegistrationPipeline,
-        collection_repo: IUserCollectionRepository,
-        card_repo: Optional[ICardRepository] = None,
-        deck_exporter: Optional[ArkhamDBDeckExporter] = None,
-        allowed_user_ids: Optional[Collection[int]] = None,
-        connect_timeout: float = 30.0,
-        read_timeout: float = 60.0,
-        download_retries: int = 3,
-        log_file_path: Optional[Path] = Path("data/logs/miskatonic_scribe.log"),
-        use_thread_pool: bool = True,
-        sleep_fn: Optional[Callable[[float], Any]] = None,
-    ) -> None:
-        self._audio_storage = audio_storage
-        self._pipeline = pipeline
-        self._collection_repo = collection_repo
-        self._card_repo = card_repo
-        self._deck_exporter = deck_exporter or ArkhamDBDeckExporter()
-        self._allowed_user_ids: FrozenSet[int] = (
-            frozenset(allowed_user_ids)
-            if allowed_user_ids is not None
-            else frozenset({1725371455})
-        )
-        self._connect_timeout = connect_timeout
-        self._read_timeout = read_timeout
-        self._download_retries = max(1, download_retries)
-        self._log_file_path = log_file_path
-        self._use_thread_pool = use_thread_pool
-        self._sleep_fn = sleep_fn
-
-    def is_user_authorized(self, user_id: Optional[int]) -> bool:
-        """Return True only if user_id is present in the configured whitelist."""
-        if user_id is None:
-            return False
-        return user_id in self._allowed_user_ids
-
-    async def _ensure_authorized(self, update: Update) -> bool:
-        """Validate effective_user against whitelist; log and reply if unauthorized."""
+    @functools.wraps(func)
+    async def wrapper(
+        self: MiskatonicTelegramBot,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        await self._user_manager.load()
         user = update.effective_user
         user_id = user.id if user else None
-        username = user.username if user else None
+        username = getattr(user, "username", None) if user else None
 
-        if self.is_user_authorized(user_id):
-            return True
+        if self._user_manager.is_approved(user_id):
+            return await func(self, update, context, *args, **kwargs)
 
         logger.warning(
             "Unauthorized access attempt blocked for user_id=%s (username=%s).",
@@ -112,16 +83,121 @@ class MiskatonicTelegramBot:
             )
         elif update.message:
             await update.message.reply_text(
-                "⛔ Acesso negado. Seu usuário não está autorizado a utilizar este bot."
+                "⛔ Acesso negado. Este sistema é fechado. Utilize /convite para solicitar acesso."
             )
-        return False
+        return None
+
+    return wrapper
+
+
+def require_admin(func: Callable[..., Any]) -> Callable[..., Any]:
+    """Decorator that intercepts admin commands/callbacks and verifies role == 'admin' and status == 'approved'."""
+
+    @functools.wraps(func)
+    async def wrapper(
+        self: MiskatonicTelegramBot,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        await self._user_manager.load()
+        user = update.effective_user
+        user_id = user.id if user else None
+        username = getattr(user, "username", None) if user else None
+
+        if self._user_manager.is_admin(user_id):
+            return await func(self, update, context, *args, **kwargs)
+
+        logger.warning(
+            "Unauthorized admin access attempt blocked for user_id=%s (username=%s).",
+            user_id,
+            username,
+        )
+        if update.callback_query:
+            await update.callback_query.answer(
+                "⛔ Acesso restrito a administradores.",
+                show_alert=True,
+            )
+        elif update.message:
+            await update.message.reply_text(
+                "⛔ Acesso negado. Este comando é exclusivo para administradores."
+            )
+        return None
+
+    return wrapper
+
+
+class MiskatonicTelegramBot:
+    """Telegram Bot controller encapsulating IAM onboarding, Admin Panel, voice, text, and .o8d export handlers."""
+
+    def __init__(
+        self,
+        audio_storage: IAudioStorageManager,
+        pipeline: CardRegistrationPipeline,
+        collection_repo: IUserCollectionRepository,
+        user_manager: Optional[UserManager] = None,
+        config_manager: Optional[ConfigManager] = None,
+        card_repo: Optional[ICardRepository] = None,
+        deck_exporter: Optional[ArkhamDBDeckExporter] = None,
+        connect_timeout: float = 30.0,
+        read_timeout: float = 60.0,
+        download_retries: int = 3,
+        log_file_path: Optional[Path] = Path("data/logs/miskatonic_scribe.log"),
+        use_thread_pool: bool = True,
+        sleep_fn: Optional[Callable[[float], Any]] = None,
+    ) -> None:
+        self._audio_storage = audio_storage
+        self._pipeline = pipeline
+        self._collection_repo = collection_repo
+        self._user_manager = user_manager or UserManager.get_instance()
+        self._config_manager = config_manager or ConfigManager.get_instance()
+        self._card_repo = card_repo
+        self._deck_exporter = deck_exporter or ArkhamDBDeckExporter()
+        self._connect_timeout = connect_timeout
+        self._read_timeout = read_timeout
+        self._download_retries = max(1, download_retries)
+        self._log_file_path = log_file_path
+        self._use_thread_pool = use_thread_pool
+        self._sleep_fn = sleep_fn
+
+    def is_user_authorized(self, user_id: Optional[int]) -> bool:
+        """Return True only if user_id has status == 'approved' in UserManager."""
+        return self._user_manager.is_approved(user_id)
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle /start and /help commands."""
+        """Handle /start and /help: check UserManager and guide unapproved users to /convite."""
         if not update.message:
             return
-        if not await self._ensure_authorized(update):
+
+        await self._user_manager.load()
+        user = update.effective_user
+        user_id = user.id if user else None
+        user_record = self._user_manager.get_user(user_id)
+
+        if user_record is None or user_record.get("status") != "approved":
+            status = user_record.get("status") if user_record else None
+            if status == "pending":
+                await update.message.reply_text(
+                    "🔒 *Sistema Fechado*\n\n"
+                    "Sua solicitação já está pendente de aprovação pelos administradores. "
+                    "Você será notificado assim que seu acesso for liberado.",
+                    parse_mode="Markdown",
+                )
+            else:
+                await update.message.reply_text(
+                    "🔒 *Sistema Fechado*\n\n"
+                    "Este bot é de acesso restrito. Para solicitar autorização de uso, "
+                    "envie o comando `/convite`.",
+                    parse_mode="Markdown",
+                )
             return
+
+        admin_line = (
+            "\n• `/admin` - Abre o Painel de Administração de usuários"
+            if user_record.get("role") == "admin"
+            else ""
+        )
         welcome_text = (
             "🐙 *Miskatonic Scribe - Arkham Horror LCG*\n\n"
             "Envie uma *mensagem de voz*, *arquivo de áudio* ou *mensagem de texto* dizendo "
@@ -134,15 +210,299 @@ class MiskatonicTelegramBot:
             "• `/start` - Exibe esta mensagem de ajuda\n"
             "• `/colecao` - Lista as cartas já confirmadas e salvas na sua coleção\n"
             "• `/atualizar_cartas` - Força o download imediato da base do ArkhamDB\n"
-            "• `/logs` - Exibe as últimas linhas do arquivo de log do servidor"
+            f"• `/logs` - Exibe as últimas linhas do arquivo de log do servidor{admin_line}"
         )
         await update.message.reply_text(welcome_text, parse_mode="Markdown")
 
+    async def invite_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /convite: register user as 'pending' in users.json and notify all admins."""
+        if not update.message or not update.effective_user:
+            return
+
+        await self._user_manager.load()
+        user = update.effective_user
+        user_id = user.id
+        first_name = getattr(user, "first_name", None) or getattr(user, "username", None) or "Investigador"
+        username = getattr(user, "username", None)
+
+        if self._user_manager.is_approved(user_id):
+            await update.message.reply_text("✅ Seu usuário já está aprovado no sistema!")
+            return
+
+        record = await self._user_manager.request_invite(
+            telegram_id=user_id,
+            first_name=first_name,
+            username=username,
+        )
+        await update.message.reply_text("Solicitação enviada.")
+
+        # Trigger notification to all admins in users.json
+        admin_ids = self._user_manager.get_admin_ids()
+        username_label = f"@{username}" if username else "N/A"
+        notification_text = (
+            "📩 *Nova Solicitação de Acesso (/convite)*\n\n"
+            f"• *Nome:* {record['first_name']}\n"
+            f"• *Username:* {username_label}\n"
+            f"• *Telegram ID:* `{user_id}`\n"
+            f"• *Data:* {record['created_at']}"
+        )
+        approval_keyboard = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        "✅ Aprovar", callback_data=f"approve_{user_id}"
+                    ),
+                    InlineKeyboardButton(
+                        "❌ Rejeitar", callback_data=f"reject_{user_id}"
+                    ),
+                ]
+            ]
+        )
+
+        bot_obj = getattr(context, "bot", None)
+        send_msg = getattr(bot_obj, "send_message", None)
+        if callable(send_msg):
+            for admin_id in admin_ids:
+                try:
+                    res = send_msg(
+                        chat_id=admin_id,
+                        text=notification_text,
+                        parse_mode="Markdown",
+                        reply_markup=approval_keyboard,
+                    )
+                    if inspect.isawaitable(res):
+                        await res
+                except Exception as exc:
+                    logger.warning("Failed to notify admin_id=%s about invite from %s: %s", admin_id, user_id, exc)
+
+    @require_admin
+    async def handle_approval_callback(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+    ) -> None:
+        """Handle approve_<id> and reject_<id> inline button callbacks from admins."""
+        query = update.callback_query
+        if query is None or not query.data:
+            return
+
+        await query.answer()
+        action, _, target_id_str = query.data.partition("_")
+        new_status = "approved" if action == "approve" else "rejected"
+
+        updated_user = await self._user_manager.set_user_status(target_id_str, new_status)
+        if updated_user is None:
+            await query.edit_message_text(
+                f"⚠️ Usuário `{target_id_str}` não encontrado em `users.json`.",
+                parse_mode="Markdown",
+            )
+            return
+
+        name_display = updated_user.get("first_name") or target_id_str
+        if new_status == "approved":
+            admin_feedback = f"✅ Acesso de *{name_display}* (ID: `{target_id_str}`) *aprovado* com sucesso."
+            user_notification = (
+                "🎉 *Acesso Aprovado!*\n\n"
+                "Sua solicitação no *Miskatonic Scribe* foi aprovada por um administrador. "
+                "Envie `/start` para começar!"
+            )
+        else:
+            admin_feedback = f"🚫 Acesso de *{name_display}* (ID: `{target_id_str}`) *rejeitado*."
+            user_notification = (
+                "🚫 *Solicitação Recusada*\n\n"
+                "Sua solicitação de acesso ao *Miskatonic Scribe* não foi aprovada."
+            )
+
+        await query.edit_message_text(admin_feedback, parse_mode="Markdown")
+
+        bot_obj = getattr(context, "bot", None)
+        send_msg = getattr(bot_obj, "send_message", None)
+        if callable(send_msg):
+            try:
+                res = send_msg(
+                    chat_id=int(target_id_str),
+                    text=user_notification,
+                    parse_mode="Markdown",
+                )
+                if inspect.isawaitable(res):
+                    await res
+            except Exception as exc:
+                logger.warning("Could not notify user %s of status change to %s: %s", target_id_str, new_status, exc)
+
+    @staticmethod
+    def _build_admin_home_keyboard() -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        "⏳ Listar Pendentes", callback_data="admin:list_pending"
+                    ),
+                    InlineKeyboardButton(
+                        "✅ Listar Aprovados", callback_data="admin:list_approved"
+                    ),
+                ],
+                [
+                    InlineKeyboardButton(
+                        "🚫 Revogar Acessos", callback_data="admin:revoke_menu"
+                    ),
+                ],
+            ]
+        )
+
+    @require_admin
+    async def admin_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /admin command to display the inline Admin Panel."""
+        if not update.message:
+            return
+
+        pending_count = len(self._user_manager.get_users_by_status("pending"))
+        approved_count = len(self._user_manager.get_users_by_status("approved"))
+        text = (
+            "🛡️ *Painel de Administração — Miskatonic Scribe*\n\n"
+            f"• *Usuários Aprovados:* {approved_count}\n"
+            f"• *Solicitações Pendentes:* {pending_count}\n\n"
+            "Selecione uma opção abaixo para gerenciar os acessos:"
+        )
+        await update.message.reply_text(
+            text,
+            parse_mode="Markdown",
+            reply_markup=self._build_admin_home_keyboard(),
+        )
+
+    @require_admin
+    async def handle_admin_callback(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+    ) -> None:
+        """Handle inline navigation callbacks inside the /admin panel (admin:...)."""
+        query = update.callback_query
+        if query is None or not query.data:
+            return
+
+        await query.answer()
+        _, _, subaction = query.data.partition(":")
+
+        if subaction == "home":
+            pending_count = len(self._user_manager.get_users_by_status("pending"))
+            approved_count = len(self._user_manager.get_users_by_status("approved"))
+            text = (
+                "🛡️ *Painel de Administração — Miskatonic Scribe*\n\n"
+                f"• *Usuários Aprovados:* {approved_count}\n"
+                f"• *Solicitações Pendentes:* {pending_count}\n\n"
+                "Selecione uma opção abaixo para gerenciar os acessos:"
+            )
+            await query.edit_message_text(
+                text,
+                parse_mode="Markdown",
+                reply_markup=self._build_admin_home_keyboard(),
+            )
+            return
+
+        if subaction == "list_pending":
+            pending_users = self._user_manager.get_users_by_status("pending")
+            lines = ["⏳ *Usuários Pendentes:*\n"]
+            buttons: List[List[InlineKeyboardButton]] = []
+
+            if not pending_users:
+                lines.append("_Nenhuma solicitação pendente no momento._")
+            else:
+                for tid, info in pending_users.items():
+                    fname = info.get("first_name") or "Investigador"
+                    uname = f" (@{info['username']})" if info.get("username") else ""
+                    lines.append(f"• *{fname}*{uname} — ID: `{tid}`")
+                    buttons.append(
+                        [
+                            InlineKeyboardButton(
+                                f"✅ Aprovar {fname}", callback_data=f"approve_{tid}"
+                            ),
+                            InlineKeyboardButton(
+                                f"❌ Rejeitar {fname}", callback_data=f"reject_{tid}"
+                            ),
+                        ]
+                    )
+
+            buttons.append([InlineKeyboardButton("🔙 Voltar", callback_data="admin:home")])
+            await query.edit_message_text(
+                "\n".join(lines),
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(buttons),
+            )
+            return
+
+        if subaction == "list_approved":
+            approved_users = self._user_manager.get_users_by_status("approved")
+            lines = ["✅ *Usuários Aprovados:*\n"]
+            if not approved_users:
+                lines.append("_Nenhum usuário aprovado._")
+            else:
+                for tid, info in approved_users.items():
+                    fname = info.get("first_name") or "Investigador"
+                    uname = f" (@{info['username']})" if info.get("username") else ""
+                    role = info.get("role", "user")
+                    lines.append(f"• *{fname}*{uname} — ID: `{tid}` [{role}]")
+
+            buttons = [[InlineKeyboardButton("🔙 Voltar", callback_data="admin:home")]]
+            await query.edit_message_text(
+                "\n".join(lines),
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(buttons),
+            )
+            return
+
+        if subaction == "revoke_menu":
+            approved_users = self._user_manager.get_users_by_status("approved")
+            lines = ["🚫 *Revogar Acesso de Usuário:*\n"]
+            buttons = []
+
+            for tid, info in approved_users.items():
+                fname = info.get("first_name") or "Investigador"
+                role = info.get("role", "user")
+                lines.append(f"• *{fname}* — ID: `{tid}` [{role}]")
+                buttons.append(
+                    [
+                        InlineKeyboardButton(
+                            f"🚫 Revogar {fname} ({tid})",
+                            callback_data=f"admin:revoke_{tid}",
+                        )
+                    ]
+                )
+
+            if not buttons:
+                lines.append("_Nenhum usuário aprovado disponível para revogação._")
+
+            buttons.append([InlineKeyboardButton("🔙 Voltar", callback_data="admin:home")])
+            await query.edit_message_text(
+                "\n".join(lines),
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(buttons),
+            )
+            return
+
+        if subaction.startswith("revoke_"):
+            target_tid = subaction.removeprefix("revoke_")
+            updated = await self._user_manager.set_user_status(target_tid, "rejected")
+            buttons = [[InlineKeyboardButton("🔙 Voltar ao Painel", callback_data="admin:home")]]
+            if updated is None:
+                await query.edit_message_text(
+                    f"⚠️ Usuário `{target_tid}` não encontrado.",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup(buttons),
+                )
+                return
+
+            fname = updated.get("first_name") or target_tid
+            await query.edit_message_text(
+                f"🚫 Acesso do usuário *{fname}* (ID: `{target_tid}`) foi *revogado* (`status = rejected`).",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(buttons),
+            )
+            return
+
+    @require_approved
     async def logs_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /logs command to return the tail of the persistent log file."""
         if not update.message:
-            return
-        if not await self._ensure_authorized(update):
             return
 
         if not self._log_file_path or not self._log_file_path.exists():
@@ -159,11 +519,10 @@ class MiskatonicTelegramBot:
             logger.exception("Failed to read log file '%s': %s", self._log_file_path, exc)
             await update.message.reply_text(f"❌ Erro ao ler arquivo de log: {exc}")
 
+    @require_approved
     async def sync_cards_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /atualizar_cartas (/sync_cards) to force-refresh cards.json from ArkhamDB."""
         if not update.message:
-            return
-        if not await self._ensure_authorized(update):
             return
         if self._card_repo is None:
             await update.message.reply_text("⚠️ Repositório de cartas não configurado para atualização manual.")
@@ -187,11 +546,10 @@ class MiskatonicTelegramBot:
                 parse_mode="Markdown",
             )
 
+    @require_approved
     async def collection_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /colecao command to display the user's persisted cards."""
         if not update.message or not update.effective_user:
-            return
-        if not await self._ensure_authorized(update):
             return
 
         user_id = update.effective_user.id
@@ -348,6 +706,7 @@ class MiskatonicTelegramBot:
         if last_exc is not None:
             raise last_exc
 
+    @require_approved
     async def handle_voice_or_audio(
         self,
         update: Update,
@@ -355,8 +714,6 @@ class MiskatonicTelegramBot:
     ) -> None:
         """Download voice/audio .ogg file, run pipeline, and ask user for confirmation."""
         if not update.message:
-            return
-        if not await self._ensure_authorized(update):
             return
 
         user_id = update.effective_user.id if update.effective_user else None
@@ -441,6 +798,7 @@ class MiskatonicTelegramBot:
             reply_markup=self._build_confirmation_keyboard(batch_id),
         )
 
+    @require_approved
     async def handle_text_message(
         self,
         update: Update,
@@ -448,8 +806,6 @@ class MiskatonicTelegramBot:
     ) -> None:
         """Process text messages to either edit an active pending batch or create a new card batch."""
         if not update.message or not update.message.text:
-            return
-        if not await self._ensure_authorized(update):
             return
 
         user_id = update.effective_user.id if update.effective_user else None
@@ -535,6 +891,7 @@ class MiskatonicTelegramBot:
             return item.match_results, item.investigator_match
         return list(item), None
 
+    @require_approved
     async def handle_confirmation_callback(
         self,
         update: Update,
@@ -543,8 +900,6 @@ class MiskatonicTelegramBot:
         """Process inline button callback (Confirmar / Cancelar) and export .o8d file for ArkhamDB."""
         query = update.callback_query
         if query is None or not query.data:
-            return
-        if not await self._ensure_authorized(update):
             return
 
         await query.answer()
@@ -688,6 +1043,8 @@ def build_telegram_application(
         .build()
     )
     application.add_handler(CommandHandler(["start", "help"], controller.start_command))
+    application.add_handler(CommandHandler("convite", controller.invite_command))
+    application.add_handler(CommandHandler("admin", controller.admin_command))
     application.add_handler(
         CommandHandler(["colecao", "collection"], controller.collection_command)
     )
@@ -702,6 +1059,18 @@ def build_telegram_application(
     )
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, controller.handle_text_message)
+    )
+    application.add_handler(
+        CallbackQueryHandler(
+            controller.handle_approval_callback,
+            pattern=r"^(approve|reject)_\d+$",
+        )
+    )
+    application.add_handler(
+        CallbackQueryHandler(
+            controller.handle_admin_callback,
+            pattern=r"^admin:.+$",
+        )
     )
     application.add_handler(
         CallbackQueryHandler(

@@ -5,23 +5,9 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import FrozenSet, List
+from typing import List
 
 from dotenv import load_dotenv
-
-
-def parse_allowed_user_ids(raw_value: str) -> FrozenSet[int]:
-    """Parse a comma-separated string of Telegram numeric user IDs into a FrozenSet[int]."""
-    ids: set[int] = set()
-    for part in raw_value.split(","):
-        cleaned = part.strip()
-        if not cleaned:
-            continue
-        try:
-            ids.add(int(cleaned))
-        except ValueError:
-            continue
-    return frozenset(ids)
 
 
 @dataclass(frozen=True)
@@ -118,7 +104,8 @@ class AppConfig:
     telegram_bot_token: str
     gemini: GeminiModelConfig
     audio: AudioMaintenanceConfig
-    allowed_user_ids: FrozenSet[int] = field(default_factory=lambda: frozenset({1725371455}))
+    users_file_path: Path = Path("users.json")
+    config_file_path: Path = Path("config.json")
     telegram_connect_timeout: float = 30.0
     telegram_read_timeout: float = 60.0
     telegram_download_retries: int = 3
@@ -167,14 +154,12 @@ class AppConfig:
         except ValueError:
             download_retries = 3
 
-        raw_allowed_ids = os.getenv("TELEGRAM_ALLOWED_USER_IDS", "1725371455")
-        allowed_user_ids = parse_allowed_user_ids(raw_allowed_ids)
-
         return cls(
             telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", "").strip(),
             gemini=GeminiModelConfig.from_env(),
             audio=AudioMaintenanceConfig.from_env(),
-            allowed_user_ids=allowed_user_ids,
+            users_file_path=Path(os.getenv("USERS_FILE_PATH", "users.json")),
+            config_file_path=Path(os.getenv("CONFIG_FILE_PATH", "config.json")),
             telegram_connect_timeout=connect_timeout,
             telegram_read_timeout=read_timeout,
             telegram_download_retries=download_retries,

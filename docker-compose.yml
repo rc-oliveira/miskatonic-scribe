@@ -8,17 +8,19 @@ services:
     env_file:
       - .env
     environment:
+      - USERS_FILE_PATH=/app/data/users.json
+      - CONFIG_FILE_PATH=/app/data/config.json
       - ARKHAMDB_CARDS_PATH=/app/data/cards.json
       - USER_COLLECTION_DB_PATH=/app/data/user_collections.json
       - AUDIO_STORAGE_DIR=/app/temp_audio
       - LOG_FILE_PATH=/app/data/logs/miskatonic_scribe.log
       - WHISPER_DEVICE=cpu
     volumes:
-      # Persists cards.json and user_collections.json on host
+      # Persists users.json, config.json, cards.json, and user_collections.json on host
       - ./data:/app/data
       # Temporary audio folder managed by the 5-file / X-days cleanup routine
       - ./temp_audio:/app/temp_audio
-      # Caches the Whisper 'base' model (~140MB) across container rebuilds
+      # Caches the Whisper model across container rebuilds
       - whisper_cache:/root/.cache/whisper
 
 volumes:
