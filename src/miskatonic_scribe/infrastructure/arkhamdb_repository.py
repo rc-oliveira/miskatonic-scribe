@@ -25,6 +25,7 @@ class ArkhamDBCardRepository(ICardRepository):
         self,
         cards_path: Path = Path("cards.json"),
         api_url: str = "https://arkhamdb.com/api/public/cards/",
+        pt_api_url: str = "https://pt.arkhamdb.com/api/public/cards/",
         refresh_days: int = 30,
         http_get: Callable[..., requests.Response] = requests.get,
         request_timeout: float = 30.0,
@@ -32,6 +33,7 @@ class ArkhamDBCardRepository(ICardRepository):
     ) -> None:
         self._cards_path = cards_path
         self._api_url = api_url
+        self._pt_api_url = pt_api_url
         self._refresh_days = max(1, refresh_days)
         self._http_get = http_get
         self._request_timeout = request_timeout
@@ -50,19 +52,48 @@ class ArkhamDBCardRepository(ICardRepository):
             return True
 
     def _download_from_arkhamdb(self) -> int:
-        """Download cards payload from ArkhamDB and write atomically to cards_path."""
-        logger.info("Baixando base de cartas do ArkhamDB (%s)...", self._api_url)
+        """Download cards payload from ArkhamDB (EN base) and pt.arkhamdb.com (PT base), merge, and save."""
+        logger.info("Baixando base de cartas do ArkhamDB (EN: %s, PT: %s)...", self._api_url, self._pt_api_url)
         try:
             self._cards_path.parent.mkdir(parents=True, exist_ok=True)
-            response = self._http_get(self._api_url, timeout=self._request_timeout)
-            response.raise_for_status()
-            payload = response.json()
-            if not isinstance(payload, list):
+            response_en = self._http_get(self._api_url, timeout=self._request_timeout)
+            response_en.raise_for_status()
+            payload_en = response_en.json()
+            if not isinstance(payload_en, list):
                 raise CardDatabaseError("ArkhamDB API did not return a JSON list of cards.")
 
+            # Index cards by code
+            cards_by_code: dict[str, dict[str, Any]] = {}
+            for card in payload_en:
+                if isinstance(card, dict) and "code" in card:
+                    cards_by_code[str(card["code"])] = card
+
+            # Merge Portuguese card names and subnames if available
+            try:
+                pt_response = self._http_get(self._pt_api_url, timeout=self._request_timeout)
+                pt_response.raise_for_status()
+                pt_payload = pt_response.json()
+                if isinstance(pt_payload, list):
+                    for card_pt in pt_payload:
+                        if isinstance(card_pt, dict) and "code" in card_pt:
+                            code = str(card_pt["code"])
+                            if code in cards_by_code:
+                                if "name" in card_pt:
+                                    cards_by_code[code]["pt_name"] = card_pt["name"]
+                                if "subname" in card_pt:
+                                    cards_by_code[code]["pt_subname"] = card_pt.get("subname")
+                logger.info("Merge de catálogo bilíngue (EN/PT) concluído.")
+            except Exception as pt_exc:
+                logger.warning(
+                    "Não foi possível obter ou mesclar base em Português (%s): %s. Mantendo base em Inglês.",
+                    self._pt_api_url,
+                    pt_exc,
+                )
+
+            merged_cards = list(cards_by_code.values())
             tmp_path = self._cards_path.with_suffix(".json.tmp")
             with tmp_path.open("w", encoding="utf-8") as f:
-                json.dump(payload, f, ensure_ascii=False, indent=2)
+                json.dump(merged_cards, f, ensure_ascii=False, indent=2)
             tmp_path.replace(self._cards_path)
         except requests.RequestException as exc:
             logger.error("Network error while downloading ArkhamDB cards: %s", exc)
@@ -75,8 +106,8 @@ class ArkhamDBCardRepository(ICardRepository):
                 f"Erro ao processar ou salvar '{self._cards_path}': {exc}"
             ) from exc
         else:
-            logger.info("'%s' atualizado com sucesso (%d entradas).", self._cards_path, len(payload))
-            return len(payload)
+            logger.info("'%s' atualizado com sucesso (%d entradas bilíngues).", self._cards_path, len(merged_cards))
+            return len(merged_cards)
 
     def ensure_cards_file(self, force: bool = False) -> Path:
         """Ensure cards.json exists and is fresh (within refresh_days), downloading if needed."""
@@ -194,6 +225,12 @@ class ArkhamDBCardRepository(ICardRepository):
         real_text = raw.get("real_text") or raw.get("text")
         real_slot = raw.get("real_slot") or raw.get("slot")
 
+        pt_name = raw.get("pt_name")
+        pt_name_str = str(pt_name).strip() if pt_name else None
+
+        pt_subname = raw.get("pt_subname")
+        pt_subname_str = str(pt_subname).strip() if pt_subname else None
+
         return ArkhamCardRecord(
             code=code,
             real_name=real_name,
@@ -215,6 +252,8 @@ class ArkhamDBCardRepository(ICardRepository):
             restrictions_investigators=cls._parse_restrictions_investigators(raw.get("restrictions")),
             deck_options=cls._parse_deck_options(raw.get("deck_options")),
             deck_requirements_cards=cls._parse_deck_requirements_cards(raw.get("deck_requirements")),
+            pt_name=pt_name_str,
+            pt_subname=pt_subname_str,
         )
 
     def load_cards(self, force_reload: bool = False) -> Sequence[ArkhamCardRecord]:

@@ -41,6 +41,7 @@ def sample_arkhamdb_payload() -> List[dict[str, Any]]:
         {
             "code": "01020",
             "name": "Facão",
+            "pt_name": "Facão",
             "real_name": "Machete",
             "xp": 0,
             "pack_code": "core",
@@ -51,6 +52,7 @@ def sample_arkhamdb_payload() -> List[dict[str, Any]]:
         {
             "code": "01520",
             "name": "Facão",
+            "pt_name": "Facão",
             "real_name": "Machete",
             "xp": 0,
             "pack_code": "rcore",
@@ -61,6 +63,7 @@ def sample_arkhamdb_payload() -> List[dict[str, Any]]:
         {
             "code": "01060",
             "name": "Definhar",
+            "pt_name": "Definhar",
             "real_name": "Shrivelling",
             "xp": 0,
             "pack_code": "core",
@@ -71,6 +74,7 @@ def sample_arkhamdb_payload() -> List[dict[str, Any]]:
         {
             "code": "01560",
             "name": "Definhar",
+            "pt_name": "Definhar",
             "real_name": "Shrivelling",
             "xp": 0,
             "pack_code": "rcore",
@@ -81,6 +85,7 @@ def sample_arkhamdb_payload() -> List[dict[str, Any]]:
         {
             "code": "02066",
             "name": "Definhar",
+            "pt_name": "Definhar",
             "real_name": "Shrivelling",
             "xp": 3,
             "pack_code": "dwl",
@@ -91,6 +96,7 @@ def sample_arkhamdb_payload() -> List[dict[str, Any]]:
         {
             "code": "03306",
             "name": "Definhar",
+            "pt_name": "Definhar",
             "real_name": "Shrivelling",
             "xp": 5,
             "pack_code": "ptc",
@@ -109,6 +115,7 @@ def sample_arkhamdb_payload() -> List[dict[str, Any]]:
         {
             "code": "02107",
             "name": "Foi só um arranhão...",
+            "pt_name": "Foi só um arranhão...",
             "real_name": "I've had worse…",
             "xp": 4,
             "pack_code": "dwl",
@@ -118,6 +125,7 @@ def sample_arkhamdb_payload() -> List[dict[str, Any]]:
         {
             "code": "02261",
             "name": "Foi só um arranhão...",
+            "pt_name": "Foi só um arranhão...",
             "real_name": "I've had worse…",
             "xp": 2,
             "pack_code": "dwl",
@@ -145,6 +153,7 @@ def sample_arkhamdb_payload() -> List[dict[str, Any]]:
         {
             "code": "04110",
             "name": "Contramágica",
+            "pt_name": "Contramágica",
             "real_name": "Counterspell",
             "xp": 2,
             "pack_code": "tfa",
@@ -234,6 +243,28 @@ def sample_arkhamdb_payload() -> List[dict[str, Any]]:
             "faction_code": "neutral",
             "type_code": "event",
             "restrictions": {"investigator": {"12004": "12004"}},
+        },
+        {
+            "code": "01088",
+            "name": "Estoque de Emergência",
+            "real_name": "Emergency Cache",
+            "pt_name": "Estoque de Emergência",
+            "xp": 0,
+            "pack_code": "core",
+            "faction_code": "neutral",
+            "type_code": "event",
+            "octgn_id": "ecache-guid-01088",
+        },
+        {
+            "code": "01089",
+            "name": "Peitar",
+            "real_name": "Guts",
+            "pt_name": "Peitar",
+            "xp": 0,
+            "pack_code": "core",
+            "faction_code": "neutral",
+            "type_code": "skill",
+            "octgn_id": "guts-guid-01089",
         },
     ]
 

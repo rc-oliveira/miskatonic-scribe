@@ -246,3 +246,27 @@ def test_format_draft_summary_includes_quick_commands_footer(
     assert "Unresolved" in summary
     assert "Comandos rápidos:" in summary
     assert "`inv <id_ou_nome>`" in summary
+
+
+
+def test_draft_deck_parser_bilingual_remove_and_swap(
+    parser_and_repo: tuple[DraftDeckCommandParser, ArkhamDBCardRepository],
+) -> None:
+    """Parser can remove and swap cards using their Portuguese names (e.g. Facão, Definhar)."""
+    parser, repo = parser_and_repo
+    draft = DraftDeck(
+        investigator_code="05004",
+        cards={"01020": 2, "01060": 2},  # 2x Machete (Facão), 2x Shrivelling (Definhar)
+        unmatched=[],
+    )
+
+    # 1. Remove 1 copy of Machete using Portuguese name "Facão"
+    report_rem = parser.parse_and_apply(draft, "-1 Facão")
+    assert report_rem.applied_count == 1
+    assert draft.cards.get("01020") == 1
+
+    # 2. Swap Definhar por Estoque de Emergência
+    report_swap = parser.parse_and_apply(draft, "swap Definhar por Estoque de Emergência")
+    assert report_swap.applied_count == 1
+    assert "01060" not in draft.cards
+    assert draft.cards.get("01088") == 2

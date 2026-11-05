@@ -19,52 +19,42 @@ from miskatonic_scribe.domain.models import ExtractedCardIntent, ExtractedDeckPa
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = (
-    "Você é um assistente de Arkham Horror LCG. Receba o texto falado ou transcrito e extraia "
-    "todas as cartas mencionadas com suas quantidades e níveis (XP).\n"
-    "REGRAS DE EXTRAÇÃO:\n"
-    "1. Se a carta estiver em Português (ex: 'Definhar', 'Facão', 'Foi só um arranhão', 'Peitar'), "
-    "traduza para o nome oficial em Inglês ('Shrivelling', 'Machete', \"I've had worse...\", 'Guts').\n"
-    "2. Se a carta já estiver em Inglês ou for nome próprio (ex: 'Logan Hastings', 'Local Map', 'Dead Ends', "
-    "'Detective\'s Intuition', 'Endurance', 'Resilience', 'Autopsy Report'), MANTENHA O NOME ESTRITAMENTE FIEL. "
-    "NUNCA tente substituir ou adivinhar outra carta parecida de coleções antigas.\n"
-    "Retorne APENAS um JSON válido no formato: [{\"nome\": \"Card Name\", \"nivel\": 0, \"quantidade\": 1}]"
+    "Você é um extrator de dados de Arkham Horror LCG.\n"
+    "Receba a transcrição de um áudio descrevendo um deck e extraia o investigador e as cartas mencionadas.\n"
+    "REGRAS ESTRITAS:\n"
+    "1. NÃO traduza os nomes das cartas. Mantenha o nome exatamente no idioma em que aparece no texto (português ou inglês), "
+    "apenas corrigindo erros óbvios de digitação fonética.\n"
+    "2. Identifique a quantidade (padrão: 1) e o nível/XP (padrão: 0). Quando um \"Nível X\" for dito no texto, aplique esse "
+    "nível a todas as cartas seguintes até que um novo nível seja mencionado.\n"
+    "3. Retorne APENAS um JSON válido neste formato exato, sem markdown ou explicações:\n"
+    "{\n"
+    '  "investigator": "Nome do Investigador",\n'
+    '  "cards": [\n'
+    '    {"name": "Nome da Carta", "level": 0, "qty": 2}\n'
+    "  ]\n"
+    "}"
 )
 
 DECK_EXTRACTION_PROMPT = (
-    "Você é um assistente especialista em Arkham Horror: The Card Game (LCG). "
-    "Você receberá uma transcrição ruidosa de áudio (ou mensagem de texto) "
-    "misturando Português (PT-BR) e Inglês.\n"
-    "Sua tarefa:\n"
-    "1. Investigador: Se um investigador for mencionado, identifique o nome oficial em Inglês "
-    "(ex: 'Ana Estandley' -> 'Diana Stanley', 'Joe Diamond'). Se houver qualificador de versão, "
-    "expansão ou pack (ex: 'Joe Diamond do Core 7.2' ou 'Core 2026', 'Daisy Walker paralela'), "
-    "preserve esse qualificador no campo 'investigador' (ex: 'Joe Diamond (Core 7.2)'). "
-    "Se nenhum investigador for mencionado, use null.\n"
-    "2. Cartas: Extraia todas as cartas de jogador mencionadas, com 'nivel' (XP, padrão 0 se não dito) "
-    "e 'quantidade' (padrão 1 se não dito).\n"
-    "   - Termos em Português: Traduza para o nome oficial em Inglês:\n"
-    "     * 'Foi só um arranhão' / 'faixão arranhão' / 'só um arranhão' -> \"I've had worse...\"\n"
-    "     * 'Estoque de Emergência' / 'stock de emergência' -> 'Emergency Cache'\n"
-    "     * 'Negar a Existência' -> 'Deny Existence' | 'Olhar Hipnótico' -> 'Hypnotic Gaze'\n"
-    "     * 'Símbolo de Proteção' -> 'Ward of Protection'\n"
-    "     * 'Peitar' -> 'Guts' | 'Esquiva' -> 'Dodge' | 'Destemido' -> 'Fearless'\n"
-    "     * 'Atraído pela Chama' -> 'Drawn to the Flame' | 'Murchar' -> 'Wither'\n"
-    "     * 'Definhar' -> 'Shrivelling' | 'Atrasar o Inevitável' -> 'Delay the Inevitable'\n"
-    "     * 'Rosário Sagrado' -> 'Holy Rosary' | 'Fluxo Quântico' -> 'Quantum Flux'\n"
-    "     * 'Sexto Sentido' -> 'Sixth Sense' | 'Quatro de Copas' -> 'Four of Cups'\n"
-    "     * 'Lanterna' -> 'Flashlight' | 'Contramágica' -> 'Counterspell'\n"
-    "     * 'Rito de Busca' -> 'Rite of Seeking' | 'Facão' -> 'Machete'\n"
-    "   - Termos já em Inglês ou Nomes Próprios: Se o nome falado já estiver em Inglês ou for um nome próprio "
-    "(ex: 'Logan Hastings', 'Local Map', 'Dead Ends', 'Detective\'s Intuition', 'Endurance', 'Resilience', "
-    "'Autopsy Report', 'Counterattack', 'Scene of the Crime', 'Working a Hunch'), MANTENHA O NOME ESTRITAMENTE FIEL. "
-    "NUNCA tente adivinhar, corrigir ou substituir por outra carta que você conhece de coleções antigas "
-    "(ex: NÃO troque Logan Hastings por Lola Santiago, NÃO troque Local Map por Logical Reasoning, "
-    "NÃO troque Endurance por Evidence!). O sistema possui validação local com o banco de dados oficial atualizado.\n"
-    "3. Se o usuário pedir para remover ou substituir alguma carta (ex: 'remover Astral Travel' ou "
-    "'trocar Astral Travel por 2 Foi só um arranhão'), liste os nomes em Inglês das cartas a remover em 'remover'.\n"
-    "4. Retorne APENAS um JSON válido no formato:\n"
-    '{"transcricao": "resumo do que foi ouvido/lido", "investigador": "Diana Stanley", '
-    '"cartas": [{"nome": "Card Name", "nivel": 0, "quantidade": 1}], "remover": []}'
+    "Você é um extrator de dados de Arkham Horror LCG.\n"
+    "Receba a transcrição de um áudio (ou mensagem de texto) descrevendo um deck e extraia o investigador e as cartas mencionadas.\n"
+    "REGRAS ESTRITAS:\n"
+    "1. NÃO traduza os nomes das cartas. Mantenha o nome exatamente no idioma em que aparece no texto ou áudio (português ou inglês), "
+    "apenas corrigindo erros óbvios de transcrição fonética.\n"
+    "2. Identifique a quantidade (padrão: 1) e o nível/XP (padrão: 0). Quando um \"Nível X\" for dito no texto, aplique esse "
+    "nível a todas as cartas seguintes até que um novo nível seja mencionado.\n"
+    "3. Se um investigador for mencionado, extraia em 'investigator' (preserve qualificadores de versão se houver, ex: 'Core 7.2'). "
+    "Se nenhum for mencionado, use null.\n"
+    "4. Se o usuário pedir para remover ou trocar alguma carta (ex: 'remover Astral Travel'), liste os nomes em 'remove'.\n"
+    "5. Retorne APENAS um JSON válido neste formato exato, sem markdown ou explicações:\n"
+    "{\n"
+    '  "transcription": "resumo do que foi ouvido/lido",\n'
+    '  "investigator": "Nome do Investigador",\n'
+    '  "cards": [\n'
+    '    {"name": "Nome da Carta", "level": 0, "qty": 2}\n'
+    "  ],\n"
+    '  "remove": []\n'
+    "}"
 )
 
 RETRYABLE_STATUS_CODES = {408, 429, 500, 502, 503, 504}
@@ -126,7 +116,7 @@ class GeminiCardIntentExtractor(ICardIntentExtractor):
         raw_text: str,
         fallback_transcription: Optional[str] = None,
     ) -> ExtractedDeckPayload:
-        """Parse either a JSON array `[...]` or a JSON object `{"investigador": ..., "cartas": [...]}`."""
+        """Parse either a JSON array `[...]` or a JSON object `{"investigator": ..., "cards": [...]}`."""
         if not raw_text or not raw_text.strip():
             raise ValueError("Empty response received from Gemini model.")
 
@@ -147,6 +137,8 @@ class GeminiCardIntentExtractor(ICardIntentExtractor):
             )
 
         if isinstance(parsed, dict):
+            if "transcription" in parsed and "transcricao" not in parsed:
+                parsed["transcricao"] = parsed["transcription"]
             payload = ExtractedDeckPayload.model_validate(parsed)
             if not payload.transcricao and fallback_transcription:
                 payload = payload.model_copy(update={"transcricao": fallback_transcription})
@@ -204,19 +196,19 @@ class GeminiCardIntentExtractor(ICardIntentExtractor):
                 contents=contents,
                 config=config,
             )
-        except ImportError:
-            response = client.models.generate_content(
-                model=model_name,
-                contents=contents,
-                config={"system_instruction": system_prompt, "temperature": 0.1},
+            raw_text = response.text or ""
+            logger.debug(
+                "Gemini model '%s' raw response (%d chars): %s",
+                model_name,
+                len(raw_text),
+                raw_text[:200],
             )
+            return raw_text
+        except Exception as exc:
+            logger.debug("Invocation failed on model '%s': %s", model_name, exc)
+            raise
 
-        text = getattr(response, "text", None)
-        if text is None:
-            raise ValueError(f"Model '{model_name}' returned response without text payload.")
-        return str(text)
-
-    def _build_multimodal_contents(
+    def _prepare_contents(
         self,
         transcribed_text: Optional[str],
         audio_path: Optional[Path],
@@ -297,12 +289,13 @@ class GeminiCardIntentExtractor(ICardIntentExtractor):
                         self._sleep_fn(delay)
                     else:
                         logger.warning(
-                            "Exhausted retries for model '%s'. Switching to next fallback model if available.",
+                            "Model '%s' exhausted after %d attempts. Trying next fallback model...",
                             model_name,
+                            total_attempts,
                         )
                 else:
                     logger.info(
-                        "Successfully extracted investigator=%r, %d card(s), %d removal(s) using model '%s'.",
+                        "Successfully extracted investigator='%s', %d card(s), %d removal(s) using model '%s'.",
                         payload.investigador,
                         len(payload.cartas),
                         len(payload.remover),
@@ -310,38 +303,37 @@ class GeminiCardIntentExtractor(ICardIntentExtractor):
                     )
                     return payload, model_name
 
-        summary = "; ".join(errors_encountered)
-        logger.error("All Gemini models failed to extract cards. Details: %s", summary)
+        combined_errors = "; ".join(errors_encountered)
         raise LLMExtractionError(
-            f"Falha ao estruturar cartas via Gemini após tentar {candidate_models}. Erros: {summary}"
+            f"Falha ao estruturar cartas via Gemini após tentar modelos {candidate_models}: {combined_errors}"
         )
 
     def extract_cards(self, transcribed_text: str) -> Tuple[List[ExtractedCardIntent], str]:
-        """Extract card intents using primary model with retries and fallback models."""
-        if not transcribed_text or not transcribed_text.strip():
-            raise LLMExtractionError("Cannot extract cards from empty transcription text.")
+        """Extract card intents from transcribed text using candidate models fallback chain."""
+        clean_text = transcribed_text.strip()
+        if not clean_text:
+            raise LLMExtractionError("Texto transcrito vazio fornecido para extração do Gemini.")
 
-        payload, model_name = self._execute_with_fallback(
-            contents=transcribed_text,
+        payload, model_used = self._execute_with_fallback(
+            contents=clean_text,
             system_prompt=SYSTEM_PROMPT,
-            fallback_transcription=transcribed_text,
+            fallback_transcription=clean_text,
         )
-        return payload.cartas, model_name
+        return payload.cartas, model_used
 
     def extract_deck_payload(
         self,
         transcribed_text: Optional[str] = None,
         audio_path: Optional[Path] = None,
     ) -> Tuple[ExtractedDeckPayload, str]:
-        """Extract investigator, cards, and removals from text, audio, or both."""
-        if (not transcribed_text or not transcribed_text.strip()) and audio_path is None:
-            raise LLMExtractionError("Cannot extract deck payload without text or audio.")
-        if audio_path is not None and not audio_path.exists():
-            raise LLMExtractionError(f"Audio file not found for Gemini multimodal extraction: {audio_path}")
+        """Extract investigator, cards, and removals from audio file and/or Whisper transcription."""
+        if audio_path is None and (transcribed_text is None or not transcribed_text.strip()):
+            raise LLMExtractionError("Nenhum áudio ou texto fornecido para extração do deck.")
 
-        contents = self._build_multimodal_contents(transcribed_text, audio_path)
-        return self._execute_with_fallback(
+        contents = self._prepare_contents(transcribed_text=transcribed_text, audio_path=audio_path)
+        payload, model_used = self._execute_with_fallback(
             contents=contents,
             system_prompt=DECK_EXTRACTION_PROMPT,
             fallback_transcription=transcribed_text,
         )
+        return payload, model_used

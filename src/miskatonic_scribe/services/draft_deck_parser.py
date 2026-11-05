@@ -377,8 +377,12 @@ class DraftDeckCommandParser:
             rec = index.get(code)
             if rec:
                 names = [rec.real_name.lower(), rec.name.lower()]
+                if rec.pt_name:
+                    names.append(rec.pt_name.lower())
                 if rec.subname:
                     names.append(f"{rec.real_name.lower()} {rec.subname.lower()}")
+                if rec.pt_subname and rec.pt_name:
+                    names.append(f"{rec.pt_name.lower()} {rec.pt_subname.lower()}")
                 if any(lowered in n or n in lowered for n in names):
                     matched_codes.append(code)
 
@@ -428,7 +432,10 @@ class DraftDeckCommandParser:
                 candidates.append((len(code), code))
             rec = index.get(code)
             if rec:
-                for name_variant in [rec.real_name, rec.name]:
+                name_variants = [rec.real_name, rec.name]
+                if rec.pt_name:
+                    name_variants.append(rec.pt_name)
+                for name_variant in name_variants:
                     if body_lower.startswith(name_variant.lower()):
                         candidates.append((len(name_variant), name_variant))
 
@@ -482,6 +489,12 @@ class DraftDeckCommandParser:
                     rec = index.get(code)
                     if rec:
                         names = [rec.real_name.lower(), rec.name.lower()]
+                        if rec.pt_name:
+                            names.append(rec.pt_name.lower())
+                        if rec.subname:
+                            names.append(f"{rec.real_name.lower()} {rec.subname.lower()}")
+                        if rec.pt_subname and rec.pt_name:
+                            names.append(f"{rec.pt_name.lower()} {rec.pt_subname.lower()}")
                         if any(orig_lower in n or n in orig_lower for n in names):
                             qty = draft.cards.pop(code)
                             orig_display = rec.display_name
@@ -556,6 +569,8 @@ class DraftDeckCommandParser:
     @staticmethod
     def _clear_unmatched_by_record(draft: DraftDeck, record: ArkhamCardRecord) -> None:
         names = [record.real_name.lower(), record.name.lower()]
+        if record.pt_name:
+            names.append(record.pt_name.lower())
         draft.unmatched = [
             u
             for u in draft.unmatched

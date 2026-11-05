@@ -200,3 +200,32 @@ def test_gemini_extracts_full_deck_payload_with_investigator_and_audio(tmp_path:
     assert payload.cartas[0].nivel == 2
     assert payload.remover == ["Astral Travel"]
 
+
+
+
+def test_gemini_extracts_deck_payload_with_english_schema_keys() -> None:
+    """Gemini extractor parses payload using new English schema keys: investigator, cards, name, level, qty."""
+    cfg = GeminiModelConfig(api_key="key", primary_model="gemini-3.5-flash", max_retries=0)
+    client = FakeGenAIClient(
+        [
+            '{\n'
+            '  "investigator": "Joe Diamond",\n'
+            '  "cards": [\n'
+            '    {"name": "Dead Ends", "level": 0, "qty": 1},\n'
+            '    {"name": "Machete", "level": 0, "qty": 2}\n'
+            '  ]\n'
+            '}'
+        ]
+    )
+    extractor = GeminiCardIntentExtractor(config=cfg, client=client, sleep_fn=lambda _: None)
+
+    payload, model_used = extractor.extract_deck_payload(transcribed_text="Joe Diamond com Dead Ends e 2 machete")
+    assert model_used == "gemini-3.5-flash"
+    assert payload.investigador == "Joe Diamond"
+    assert len(payload.cartas) == 2
+    assert payload.cartas[0].nome == "Dead Ends"
+    assert payload.cartas[0].nivel == 0
+    assert payload.cartas[0].quantidade == 1
+    assert payload.cartas[1].nome == "Machete"
+    assert payload.cartas[1].nivel == 0
+    assert payload.cartas[1].quantidade == 2

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 from dataclasses import replace
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
@@ -22,8 +23,10 @@ logger = logging.getLogger(__name__)
 
 
 def _normalize_text(value: str) -> str:
-    """Normalize card name for consistent fuzzy comparison."""
-    lowered = value.lower().strip()
+    """Normalize card name for consistent fuzzy comparison, removing accents."""
+    nfkd = unicodedata.normalize("NFKD", value)
+    unaccented = "".join(c for c in nfkd if not unicodedata.combining(c))
+    lowered = unaccented.lower().strip()
     lowered = lowered.replace("’", "'").replace("“", '"').replace("”", '"')
     cleaned = re.sub(r"[^a-z0-9\s]", " ", lowered)
     return re.sub(r"\s+", " ", cleaned).strip()
@@ -42,31 +45,70 @@ class ArkhamFuzzyCardMatcher(ICardMatcher):
 
     @staticmethod
     def _compute_similarity(query_norm: str, candidate: ArkhamCardRecord) -> int:
-        """Compute best fuzzy score between normalized query and candidate names."""
+        """Compute best fuzzy score between normalized query and candidate names (EN and PT)."""
+        scores_en: List[int] = []
         real_norm = _normalize_text(candidate.real_name)
         if query_norm == real_norm:
-            return 100
-
-        scores = [
-            fuzz.ratio(query_norm, real_norm),
-            fuzz.token_sort_ratio(query_norm, real_norm),
-        ]
+            scores_en.append(100)
+        else:
+            scores_en.extend([
+                fuzz.ratio(query_norm, real_norm),
+                fuzz.token_sort_ratio(query_norm, real_norm),
+                fuzz.WRatio(query_norm, real_norm),
+            ])
 
         if candidate.subname:
             full_norm = _normalize_text(f"{candidate.real_name} {candidate.subname}")
             if query_norm == full_norm:
-                return 100
-            scores.append(fuzz.ratio(query_norm, full_norm))
-            scores.append(fuzz.token_set_ratio(query_norm, full_norm))
+                scores_en.append(100)
+            else:
+                scores_en.extend([
+                    fuzz.ratio(query_norm, full_norm),
+                    fuzz.token_sort_ratio(query_norm, full_norm),
+                    fuzz.WRatio(query_norm, full_norm),
+                ])
 
         if candidate.name and candidate.name != candidate.real_name:
             local_norm = _normalize_text(candidate.name)
             if query_norm == local_norm:
-                return 100
-            scores.append(fuzz.ratio(query_norm, local_norm))
-            scores.append(fuzz.token_sort_ratio(query_norm, local_norm))
+                scores_en.append(100)
+            else:
+                scores_en.extend([
+                    fuzz.ratio(query_norm, local_norm),
+                    fuzz.token_sort_ratio(query_norm, local_norm),
+                    fuzz.WRatio(query_norm, local_norm),
+                ])
 
-        return int(max(scores))
+        score_en = max(scores_en) if scores_en else 0
+        if score_en == 100:
+            return 100
+
+        scores_pt: List[int] = []
+        if candidate.pt_name:
+            pt_norm = _normalize_text(candidate.pt_name)
+            if query_norm == pt_norm:
+                scores_pt.append(100)
+            else:
+                scores_pt.extend([
+                    fuzz.ratio(query_norm, pt_norm),
+                    fuzz.token_sort_ratio(query_norm, pt_norm),
+                    fuzz.WRatio(query_norm, pt_norm),
+                ])
+
+            if candidate.pt_subname:
+                pt_full_norm = _normalize_text(f"{candidate.pt_name} {candidate.pt_subname}")
+                if query_norm == pt_full_norm:
+                    scores_pt.append(100)
+                else:
+                    scores_pt.extend([
+                        fuzz.ratio(query_norm, pt_full_norm),
+                        fuzz.token_sort_ratio(query_norm, pt_full_norm),
+                        fuzz.WRatio(query_norm, pt_full_norm),
+                    ])
+
+        score_pt = max(scores_pt) if scores_pt else 0
+
+        return int(max(score_en, score_pt))
 
     @staticmethod
     def _candidate_sort_key(item: Tuple[int, ArkhamCardRecord], target_xp: int) -> Tuple[int, int, int, str]:
@@ -211,7 +253,9 @@ class ArkhamFuzzyCardMatcher(ICardMatcher):
             if investigator.official_name:
                 target_norm = _normalize_text(investigator.official_name)
                 for c in inv_cards:
-                    if _normalize_text(c.real_name) == target_norm:
+                    if _normalize_text(c.real_name) == target_norm or (
+                        c.pt_name and _normalize_text(c.pt_name) == target_norm
+                    ):
                         return c
             return None
 
@@ -271,12 +315,16 @@ class ArkhamFuzzyCardMatcher(ICardMatcher):
                     if is_signature:
                         other_real = _normalize_text(other.real_name)
                         other_name = _normalize_text(other.name)
+                        other_pt = _normalize_text(other.pt_name) if other.pt_name else ""
                         for ccn in clean_card_names:
                             if (
                                 ccn == other_real
                                 or ccn == other_name
+                                or (other_pt and ccn == other_pt)
                                 or (len(ccn) >= 4 and (ccn in other_real or other_real in ccn))
+                                or (other_pt and len(ccn) >= 4 and (ccn in other_pt or other_pt in ccn))
                                 or fuzz.ratio(ccn, other_real) >= 80
+                                or (other_pt and fuzz.ratio(ccn, other_pt) >= 80)
                             ):
                                 sig_matches += 1
                                 break

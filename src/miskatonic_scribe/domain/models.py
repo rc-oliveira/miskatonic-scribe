@@ -6,15 +6,31 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, List, Optional, Tuple
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class ExtractedCardIntent(BaseModel):
     """Validated representation of a single card extracted by the LLM."""
 
-    nome: str = Field(..., min_length=1, description="Official card name in English")
+    nome: str = Field(..., min_length=1, description="Card name (in English or Portuguese)")
     nivel: int = Field(default=0, ge=0, le=10, description="Card XP level (0-10)")
     quantidade: int = Field(default=1, ge=1, description="Quantity of copies mentioned")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _map_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            mapped = dict(data)
+            if "name" in mapped and "nome" not in mapped:
+                mapped["nome"] = mapped["name"]
+            if "level" in mapped and "nivel" not in mapped:
+                mapped["nivel"] = mapped["level"]
+            if "qty" in mapped and "quantidade" not in mapped:
+                mapped["quantidade"] = mapped["qty"]
+            elif "quantity" in mapped and "quantidade" not in mapped:
+                mapped["quantidade"] = mapped["quantity"]
+            return mapped
+        return data
 
     @field_validator("nome", mode="before")
     @classmethod
@@ -45,6 +61,22 @@ class ExtractedDeckPayload(BaseModel):
     investigador: Optional[str] = Field(default=None, description="Official investigator name in English")
     cartas: List[ExtractedCardIntent] = Field(default_factory=list)
     remover: List[str] = Field(default_factory=list, description="Card names to remove from pending batch")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _map_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            mapped = dict(data)
+            if "investigator" in mapped and "investigador" not in mapped:
+                mapped["investigador"] = mapped["investigator"]
+            if "cards" in mapped and "cartas" not in mapped:
+                mapped["cartas"] = mapped["cards"]
+            if "remove" in mapped and "remover" not in mapped:
+                mapped["remover"] = mapped["remove"]
+            elif "removals" in mapped and "remover" not in mapped:
+                mapped["remover"] = mapped["removals"]
+            return mapped
+        return data
 
     @field_validator("investigador", mode="before")
     @classmethod
@@ -88,6 +120,8 @@ class ArkhamCardRecord:
     restrictions_investigators: Tuple[str, ...] = ()
     deck_options: Tuple[dict[str, Any], ...] = ()
     deck_requirements_cards: Tuple[str, ...] = ()
+    pt_name: Optional[str] = None
+    pt_subname: Optional[str] = None
 
     @property
     def is_reprint(self) -> bool:

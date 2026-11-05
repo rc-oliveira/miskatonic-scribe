@@ -251,3 +251,63 @@ def test_matcher_tiebreak_prefers_core_when_qualifier_in_name(cards_json_file: P
     inv = matcher.match_investigator("Joe Diamond (Core 7.2)")
     assert inv.matched is True
     assert inv.card_code == "12004"
+
+
+
+def test_matcher_matches_bilingual_portuguese_and_english_cards(cards_json_file: Path) -> None:
+    """Matcher should seamlessly match cards searched by English name, Portuguese name, or accent variations."""
+    repo = ArkhamDBCardRepository(cards_path=cards_json_file)
+    matcher = ArkhamFuzzyCardMatcher(repository=repo, similarity_threshold=65)
+
+    # 1. Portuguese match: "Facão" -> 01020 (Machete)
+    res_pt_facao = matcher.match_intent(ExtractedCardIntent(nome="Facão", nivel=0, quantidade=2))
+    assert res_pt_facao.matched is True
+    assert res_pt_facao.card_code == "01020"
+
+    # 2. English match: "Machete" -> 01020
+    res_en_machete = matcher.match_intent(ExtractedCardIntent(nome="Machete", nivel=0, quantidade=2))
+    assert res_en_machete.matched is True
+    assert res_en_machete.card_code == "01020"
+
+    # 3. Portuguese match with accents: "Estoque de Emergência" -> 01088 (Emergency Cache)
+    res_pt_cache = matcher.match_intent(ExtractedCardIntent(nome="Estoque de Emergência", nivel=0, quantidade=2))
+    assert res_pt_cache.matched is True
+    assert res_pt_cache.card_code == "01088"
+
+    # 4. Portuguese match without accents and lower: "estoque de emergencia" -> 01088
+    res_pt_cache_norm = matcher.match_intent(ExtractedCardIntent(nome="estoque de emergencia", nivel=0, quantidade=2))
+    assert res_pt_cache_norm.matched is True
+    assert res_pt_cache_norm.card_code == "01088"
+
+    # 5. Portuguese match: "Peitar" -> 01089 (Guts)
+    res_pt_guts = matcher.match_intent(ExtractedCardIntent(nome="Peitar", nivel=0, quantidade=1))
+    assert res_pt_guts.matched is True
+    assert res_pt_guts.card_code == "01089"
+
+
+def test_repository_downloads_and_merges_en_and_pt_cards(tmp_path: Path) -> None:
+    """ArkhamDBCardRepository downloads EN and PT catalogs and merges pt_name/pt_subname by code."""
+    target_file = tmp_path / "cards.json"
+    en_cards = [
+        {"code": "01020", "name": "Machete", "real_name": "Machete", "xp": 0, "type_code": "asset", "pack_code": "core"},
+        {"code": "01088", "name": "Emergency Cache", "real_name": "Emergency Cache", "xp": 0, "type_code": "event", "pack_code": "core"},
+    ]
+    pt_cards = [
+        {"code": "01020", "name": "Facão", "subname": None},
+        {"code": "01088", "name": "Estoque de Emergência", "subname": None},
+    ]
+
+    def mock_get(url: str, timeout: float) -> Any:
+        if "pt.arkhamdb.com" in url:
+            return DummyHttpResponse(pt_cards)
+        return DummyHttpResponse(en_cards)
+
+    repo = ArkhamDBCardRepository(cards_path=target_file, http_get=mock_get)
+    records = repo.load_cards()
+
+    assert len(records) == 2
+    rec_by_code = {r.code: r for r in records}
+    assert rec_by_code["01020"].real_name == "Machete"
+    assert rec_by_code["01020"].pt_name == "Facão"
+    assert rec_by_code["01088"].real_name == "Emergency Cache"
+    assert rec_by_code["01088"].pt_name == "Estoque de Emergência"
