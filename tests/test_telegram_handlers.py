@@ -7,7 +7,10 @@ from typing import Any, Coroutine, List, Tuple
 from unittest.mock import AsyncMock, MagicMock
 
 from scripts.seed_admin import main as seed_admin_main
-from miskatonic_scribe.bot.telegram_handlers import MiskatonicTelegramBot
+from miskatonic_scribe.bot.telegram_handlers import (
+    MiskatonicTelegramBot,
+    build_telegram_application,
+)
 from miskatonic_scribe.config import AudioMaintenanceConfig
 from miskatonic_scribe.domain.exceptions import LLMExtractionError, TranscriptionError
 from miskatonic_scribe.domain.interfaces import IAudioTranscriber, ICardIntentExtractor
@@ -894,3 +897,49 @@ def test_telegram_global_error_handler_mutes_polling_bad_gateway_glitches(
     assert "Bad Gateway" in caplog.text
     # Garante que NÃO logou no nível ERROR
     assert not any(record.levelno >= logging.ERROR for record in caplog.records)
+
+
+
+def test_telegram_refresh_command_registration_and_execution(
+    tmp_path: Path,
+    cards_json_file: Path,
+) -> None:
+    """Verify /refresh command is registered in Application and invokes sync_cards_command."""
+    user_manager = _create_approved_user_manager(tmp_path, admin_id=ADMIN_USER_ID)
+    audio_storage = LocalAudioStorageManager(
+        config=AudioMaintenanceConfig(storage_dir=tmp_path / "audio", max_files=5, max_age_days=3)
+    )
+    repo = ArkhamDBCardRepository(cards_path=cards_json_file)
+    pipeline = CardRegistrationPipeline(
+        transcriber=StubTranscriber(""),
+        extractor=StubExtractor([]),
+        matcher=ArkhamFuzzyCardMatcher(repository=repo),
+    )
+    bot = MiskatonicTelegramBot(
+        audio_storage=audio_storage,
+        pipeline=pipeline,
+        collection_repo=JsonUserCollectionRepository(db_path=tmp_path / "collections.json"),
+        user_manager=user_manager,
+        card_repo=repo,
+        use_thread_pool=False,
+    )
+
+    # 1. Verify build_telegram_application registers 'refresh' command
+    from telegram.ext import CommandHandler
+    app = build_telegram_application("fake-token", bot)
+    cmd_handlers = [h for h in app.handlers.get(0, []) if isinstance(h, CommandHandler)]
+    refresh_registered = any("refresh" in h.commands for h in cmd_handlers)
+    assert refresh_registered is True
+
+    # 2. Test execution of sync_cards_command via /refresh
+    sync_status_msg = MagicMock()
+    sync_status_msg.edit_text = AsyncMock()
+    sync_update = MagicMock()
+    sync_update.effective_user.id = ADMIN_USER_ID
+    sync_update.callback_query = None
+    sync_update.message.reply_text = AsyncMock(return_value=sync_status_msg)
+    repo.refresh_cards = MagicMock(return_value=repo.load_cards())
+
+    context = MagicMock()
+    _drive_coroutine(bot.sync_cards_command(sync_update, context))
+    assert "atualizada com sucesso" in sync_status_msg.edit_text.call_args.args[0]

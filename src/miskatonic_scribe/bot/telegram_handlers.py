@@ -222,7 +222,7 @@ class MiskatonicTelegramBot:
             "Comandos disponíveis:\n"
             "• `/start` - Exibe esta mensagem de ajuda\n"
             "• `/colecao` - Lista as cartas já confirmadas e salvas na sua coleção\n"
-            "• `/atualizar_cartas` - Força o download imediato da base do ArkhamDB\n"
+            "• `/refresh` (ou `/atualizar_cartas`) - Força o download e sincronização da base de cartas do ArkhamDB\n"
             f"• `/logs` - Exibe as últimas linhas do arquivo de log do servidor{admin_line}"
         )
         await update.message.reply_text(welcome_text, parse_mode="Markdown")
@@ -534,7 +534,7 @@ class MiskatonicTelegramBot:
 
     @require_approved
     async def sync_cards_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle /atualizar_cartas (/sync_cards) to force-refresh cards.json from ArkhamDB."""
+        """Handle /refresh (/atualizar_cartas, /sync_cards, /atualizar) to force-refresh cards.json from ArkhamDB."""
         if not update.message:
             return
         if self._card_repo is None:
@@ -542,7 +542,7 @@ class MiskatonicTelegramBot:
             return
 
         status_msg = await update.message.reply_text(
-            "🔄 Atualizando `cards.json` a partir do servidor do ArkhamDB...",
+            "🔄 Atualizando base de cartas bilíngue (EN/PT) a partir do ArkhamDB...",
             parse_mode="Markdown",
         )
         try:
@@ -555,7 +555,7 @@ class MiskatonicTelegramBot:
             await status_msg.edit_text(f"❌ Falha ao atualizar base do ArkhamDB: {exc}")
         else:
             await status_msg.edit_text(
-                f"✅ Base do ArkhamDB (`cards.json`) atualizada com sucesso! Total de cartas carregadas: *{len(records)}*.",
+                f"✅ Base do ArkhamDB (`cards.json`) atualizada com sucesso! Total de cartas bilíngues carregadas: *{len(records)}*.",
                 parse_mode="Markdown",
             )
 
@@ -1151,7 +1151,7 @@ def build_telegram_application(
         CommandHandler(["colecao", "collection"], controller.collection_command)
     )
     application.add_handler(
-        CommandHandler(["atualizar_cartas", "sync_cards"], controller.sync_cards_command)
+        CommandHandler(["refresh", "atualizar_cartas", "sync_cards", "atualizar"], controller.sync_cards_command)
     )
     application.add_handler(
         CommandHandler(["logs", "log"], controller.logs_command)
