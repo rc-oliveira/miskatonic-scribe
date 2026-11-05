@@ -88,7 +88,7 @@ def bootstrap_application(config: AppConfig | None = None) -> MiskatonicTelegram
         transcription_mode=cfg.transcription_mode,
     )
     collection_repo = JsonUserCollectionRepository(db_path=cfg.user_collection_db_path)
-    deck_exporter = ArkhamDBDeckExporter()
+    deck_exporter = ArkhamDBDeckExporter(card_repository=card_repository)
 
     return MiskatonicTelegramBot(
         audio_storage=audio_storage,

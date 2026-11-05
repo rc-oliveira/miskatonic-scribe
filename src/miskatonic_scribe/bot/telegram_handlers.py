@@ -157,7 +157,9 @@ class MiskatonicTelegramBot:
         self._user_manager = user_manager or UserManager.get_instance()
         self._config_manager = config_manager or ConfigManager.get_instance()
         self._card_repo = card_repo or getattr(getattr(pipeline, "_matcher", None), "_repository", None)
-        self._deck_exporter = deck_exporter or ArkhamDBDeckExporter()
+        self._deck_exporter = deck_exporter or ArkhamDBDeckExporter(card_repository=self._card_repo)
+        if getattr(self._deck_exporter, "_card_repository", None) is None:
+            self._deck_exporter._card_repository = self._card_repo
         matcher_obj = getattr(pipeline, "_matcher", None)
         if draft_parser is not None:
             self._draft_parser = draft_parser
