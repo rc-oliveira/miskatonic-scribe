@@ -211,3 +211,43 @@ def test_matcher_matches_investigator_diana_stanley(cards_json_file: Path) -> No
     assert inv.card_code == "05004"
     assert inv.official_name == "Diana Stanley"
     assert "05004" in inv.format_telegram_line()
+
+
+
+def test_matcher_tiebreak_prefers_core_2026_when_deck_contains_signatures(cards_json_file: Path) -> None:
+    """When two investigators have the exact same name (Joe Diamond 05002 vs 12004),
+    the matcher must pick 12004 if deck contains its signature cards (Dead Ends / Detective's Intuition)."""
+    repo = ArkhamDBCardRepository(cards_path=cards_json_file)
+    matcher = ArkhamFuzzyCardMatcher(repository=repo, similarity_threshold=65)
+
+    inv = matcher.match_investigator(
+        "Joe Diamond",
+        candidate_card_names=["Dead Ends", "Detective's Intuition", "Machete"],
+    )
+    assert inv.matched is True
+    assert inv.card_code == "12004"
+    assert inv.official_name == "Joe Diamond"
+
+
+def test_matcher_tiebreak_prefers_tcu_when_deck_contains_tcu_signature(cards_json_file: Path) -> None:
+    """When deck contains 05002 signature (Detective's Colt 1911s), matcher must pick 05002."""
+    repo = ArkhamDBCardRepository(cards_path=cards_json_file)
+    matcher = ArkhamFuzzyCardMatcher(repository=repo, similarity_threshold=65)
+
+    inv = matcher.match_investigator(
+        "Joe Diamond",
+        candidate_card_names=["Detective's Colt 1911s", "Machete"],
+    )
+    assert inv.matched is True
+    assert inv.card_code == "05002"
+    assert inv.official_name == "Joe Diamond"
+
+
+def test_matcher_tiebreak_prefers_core_when_qualifier_in_name(cards_json_file: Path) -> None:
+    """When investigator name explicitly mentions 'Core', pack bonus must favor 12004 (pack core_2026)."""
+    repo = ArkhamDBCardRepository(cards_path=cards_json_file)
+    matcher = ArkhamFuzzyCardMatcher(repository=repo, similarity_threshold=65)
+
+    inv = matcher.match_investigator("Joe Diamond (Core 7.2)")
+    assert inv.matched is True
+    assert inv.card_code == "12004"

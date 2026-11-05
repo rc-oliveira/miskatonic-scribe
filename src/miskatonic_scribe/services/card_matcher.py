@@ -227,8 +227,12 @@ class ArkhamFuzzyCardMatcher(ICardMatcher):
                         return c
         return None
 
-    def match_investigator(self, investigator_name: str) -> InvestigatorMatchResult:
-        """Find the best ArkhamDB investigator card matching investigator_name."""
+    def match_investigator(
+        self,
+        investigator_name: str,
+        candidate_card_names: Optional[Sequence[str]] = None,
+    ) -> InvestigatorMatchResult:
+        """Find the best ArkhamDB investigator card matching investigator_name and deck contents."""
         raw_clean = investigator_name.strip()
         if not raw_clean:
             return InvestigatorMatchResult(raw_name=raw_clean, matched=False, similarity_score=0)
@@ -241,33 +245,88 @@ class ArkhamFuzzyCardMatcher(ICardMatcher):
         pool = investigator_cards if investigator_cards else list(cards)
 
         query_norm = _normalize_text(raw_clean)
-        scored: List[Tuple[int, ArkhamCardRecord]] = [
-            (self._compute_similarity(query_norm, card), card) for card in pool
+        clean_card_names = [
+            _normalize_text(name) for name in (candidate_card_names or []) if name and name.strip()
         ]
-        scored.sort(key=lambda item: self._candidate_sort_key(item, 0))
 
-        best_score, best_card = scored[0]
-        if best_score < self._threshold:
+        # Precompute signature associations and scores for all investigator candidates
+        scored: List[Tuple[int, int, int, int, int, ArkhamCardRecord]] = []
+        for card in pool:
+            base_score = self._compute_similarity(query_norm, card)
+
+            pack_bonus = 0
+            if card.pack_code:
+                pack_norm = _normalize_text(card.pack_code)
+                for part in query_norm.split():
+                    if len(part) >= 3 and part in pack_norm:
+                        pack_bonus += 15
+
+            sig_matches = 0
+            if clean_card_names:
+                for other in cards:
+                    is_signature = (
+                        card.code in other.restrictions_investigators
+                        or other.code in card.deck_requirements_cards
+                    )
+                    if is_signature:
+                        other_real = _normalize_text(other.real_name)
+                        other_name = _normalize_text(other.name)
+                        for ccn in clean_card_names:
+                            if (
+                                ccn == other_real
+                                or ccn == other_name
+                                or (len(ccn) >= 4 and (ccn in other_real or other_real in ccn))
+                                or fuzz.ratio(ccn, other_real) >= 80
+                            ):
+                                sig_matches += 1
+                                break
+
+            try:
+                code_num = int(re.sub(r"\D", "", card.code))
+            except ValueError:
+                code_num = 0
+
+            reprint_penalty = 1 if card.is_reprint else 0
+            scored.append((base_score, sig_matches, pack_bonus, code_num, reprint_penalty, card))
+
+        scored.sort(
+            key=lambda item: (
+                -item[1],  # signature matches first
+                -item[0],  # similarity score
+                -item[2],  # pack bonus
+                item[4],   # reprint penalty (0 first)
+                -item[3],  # newer code number first on tie
+                item[5].code,
+            )
+        )
+
+        best_score, best_sig, best_pack, _, _, best_card = scored[0]
+        effective_score = best_score
+        if best_sig > 0 and effective_score < 100:
+            effective_score = min(100, effective_score + (best_sig * 15))
+
+        if effective_score < self._threshold:
             logger.info(
                 "No investigator match above threshold (%d%%) for '%s'. Best candidate: '%s' (%s) at %d%%.",
                 self._threshold,
                 raw_clean,
                 best_card.real_name,
                 best_card.code,
-                best_score,
+                effective_score,
             )
             return InvestigatorMatchResult(
                 raw_name=raw_clean,
                 matched=False,
-                similarity_score=best_score,
+                similarity_score=effective_score,
             )
 
         logger.info(
-            "Matched investigator '%s' -> '%s' (ID: %s, score: %d%%)",
+            "Matched investigator '%s' -> '%s' (ID: %s, score: %d%%, sig_matches: %d)",
             raw_clean,
             best_card.real_name,
             best_card.code,
-            best_score,
+            effective_score,
+            best_sig,
         )
         return InvestigatorMatchResult(
             raw_name=raw_clean,
@@ -277,7 +336,7 @@ class ArkhamFuzzyCardMatcher(ICardMatcher):
             subname=best_card.subname,
             faction_code=best_card.faction_code,
             octgn_id=best_card.octgn_id,
-            similarity_score=best_score,
+            similarity_score=effective_score,
         )
 
     def match_intent(

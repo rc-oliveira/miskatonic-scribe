@@ -49,7 +49,14 @@ class CardRegistrationPipeline:
         """Match investigator and cards from an ExtractedDeckPayload."""
         investigator_match: Optional[InvestigatorMatchResult] = None
         if payload.investigador:
-            investigator_match = self._matcher.match_investigator(payload.investigador)
+            card_names = [c.nome for c in payload.cartas]
+            try:
+                investigator_match = self._matcher.match_investigator(
+                    payload.investigador,
+                    candidate_card_names=card_names,
+                )
+            except TypeError:
+                investigator_match = self._matcher.match_investigator(payload.investigador)
         elif context_investigator is not None:
             investigator_match = context_investigator
 

@@ -1096,12 +1096,26 @@ class MiskatonicTelegramBot:
         update: object,
         context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
-        """Log any unhandled exception raised during Telegram update polling or dispatching."""
+        """Log unhandled dispatcher exceptions, gracefully muting noisy background polling network glitches."""
+        err = context.error
+        err_msg = str(err).lower() if err else ""
+        if update is None and (
+            "bad gateway" in err_msg
+            or "timed out" in err_msg
+            or "networkerror" in err_msg
+            or "connection reset" in err_msg
+        ):
+            logger.warning(
+                "Telegram polling network glitch (update=None): %s. Reconnecting automatically...",
+                err,
+            )
+            return
+
         logger.error(
             "Unhandled exception in Telegram Bot dispatcher (update=%r): %s",
             update,
-            context.error,
-            exc_info=context.error,
+            err,
+            exc_info=err,
         )
 
 

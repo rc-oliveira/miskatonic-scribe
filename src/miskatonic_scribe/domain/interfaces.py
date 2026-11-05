@@ -88,7 +88,11 @@ class ICardMatcher(ABC):
     ) -> List[CardMatchResult]:
         """Match a sequence of extracted card intents against ArkhamDB."""
 
-    def match_investigator(self, investigator_name: str) -> InvestigatorMatchResult:
+    def match_investigator(
+        self,
+        investigator_name: str,
+        candidate_card_names: Optional[Sequence[str]] = None,
+    ) -> InvestigatorMatchResult:
         """Match an investigator name against ArkhamDB investigator records."""
         return InvestigatorMatchResult(raw_name=investigator_name, matched=False)
 

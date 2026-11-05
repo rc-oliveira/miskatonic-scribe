@@ -857,3 +857,40 @@ def test_telegram_deterministic_editing_never_calls_llm(
     assert "1x Shrivelling (Nível 0)" in final_msg
     assert "1x Shrivelling (Nível 3)" in final_msg
     assert "2x Machete (Nível 0)" in final_msg
+
+
+
+def test_telegram_global_error_handler_mutes_polling_bad_gateway_glitches(
+    tmp_path: Path,
+    cards_json_file: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Verify that transient Bad Gateway and NetworkError during background polling do not log critical errors."""
+    user_manager = _create_approved_user_manager(tmp_path, admin_id=ADMIN_USER_ID)
+    audio_storage = LocalAudioStorageManager(
+        config=AudioMaintenanceConfig(storage_dir=tmp_path / "audio", max_files=5, max_age_days=3)
+    )
+    repo = ArkhamDBCardRepository(cards_path=cards_json_file)
+    pipeline = CardRegistrationPipeline(
+        transcriber=StubTranscriber(""),
+        extractor=StubExtractor([]),
+        matcher=ArkhamFuzzyCardMatcher(repository=repo),
+    )
+    bot = MiskatonicTelegramBot(
+        audio_storage=audio_storage,
+        pipeline=pipeline,
+        collection_repo=JsonUserCollectionRepository(db_path=tmp_path / "collections.json"),
+        user_manager=user_manager,
+    )
+
+    context = MagicMock()
+    context.error = Exception("telegram.error.NetworkError: Bad Gateway")
+
+    import logging
+    with caplog.at_level(logging.WARNING):
+        _drive_coroutine(bot.global_error_handler(update=None, context=context))
+
+    assert "Telegram polling network glitch (update=None)" in caplog.text
+    assert "Bad Gateway" in caplog.text
+    # Garante que NÃO logou no nível ERROR
+    assert not any(record.levelno >= logging.ERROR for record in caplog.records)
