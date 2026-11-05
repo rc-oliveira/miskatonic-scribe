@@ -49,35 +49,26 @@ class ArkhamFuzzyCardMatcher(ICardMatcher):
         scores_en: List[int] = []
         real_norm = _normalize_text(candidate.real_name)
         if query_norm == real_norm:
-            scores_en.append(100)
-        else:
+            return 100
+        scores_en.extend([
+            fuzz.ratio(query_norm, real_norm),
+            fuzz.token_sort_ratio(query_norm, real_norm),
+        ])
+
+        if candidate.name and candidate.name != candidate.real_name:
+            local_norm = _normalize_text(candidate.name)
+            if query_norm == local_norm:
+                return 100
             scores_en.extend([
-                fuzz.ratio(query_norm, real_norm),
-                fuzz.token_sort_ratio(query_norm, real_norm),
-                fuzz.WRatio(query_norm, real_norm),
+                fuzz.ratio(query_norm, local_norm),
+                fuzz.token_sort_ratio(query_norm, local_norm),
             ])
 
         if candidate.subname:
             full_norm = _normalize_text(f"{candidate.real_name} {candidate.subname}")
             if query_norm == full_norm:
-                scores_en.append(100)
-            else:
-                scores_en.extend([
-                    fuzz.ratio(query_norm, full_norm),
-                    fuzz.token_sort_ratio(query_norm, full_norm),
-                    fuzz.WRatio(query_norm, full_norm),
-                ])
-
-        if candidate.name and candidate.name != candidate.real_name:
-            local_norm = _normalize_text(candidate.name)
-            if query_norm == local_norm:
-                scores_en.append(100)
-            else:
-                scores_en.extend([
-                    fuzz.ratio(query_norm, local_norm),
-                    fuzz.token_sort_ratio(query_norm, local_norm),
-                    fuzz.WRatio(query_norm, local_norm),
-                ])
+                return 100
+            scores_en.append(fuzz.token_sort_ratio(query_norm, full_norm))
 
         score_en = max(scores_en) if scores_en else 0
         if score_en == 100:
@@ -87,24 +78,17 @@ class ArkhamFuzzyCardMatcher(ICardMatcher):
         if candidate.pt_name:
             pt_norm = _normalize_text(candidate.pt_name)
             if query_norm == pt_norm:
-                scores_pt.append(100)
-            else:
-                scores_pt.extend([
-                    fuzz.ratio(query_norm, pt_norm),
-                    fuzz.token_sort_ratio(query_norm, pt_norm),
-                    fuzz.WRatio(query_norm, pt_norm),
-                ])
+                return 100
+            scores_pt.extend([
+                fuzz.ratio(query_norm, pt_norm),
+                fuzz.token_sort_ratio(query_norm, pt_norm),
+            ])
 
             if candidate.pt_subname:
                 pt_full_norm = _normalize_text(f"{candidate.pt_name} {candidate.pt_subname}")
                 if query_norm == pt_full_norm:
-                    scores_pt.append(100)
-                else:
-                    scores_pt.extend([
-                        fuzz.ratio(query_norm, pt_full_norm),
-                        fuzz.token_sort_ratio(query_norm, pt_full_norm),
-                        fuzz.WRatio(query_norm, pt_full_norm),
-                    ])
+                    return 100
+                scores_pt.append(fuzz.token_sort_ratio(query_norm, pt_full_norm))
 
         score_pt = max(scores_pt) if scores_pt else 0
 

@@ -311,3 +311,54 @@ def test_repository_downloads_and_merges_en_and_pt_cards(tmp_path: Path) -> None
     assert rec_by_code["01020"].pt_name == "Facão"
     assert rec_by_code["01088"].real_name == "Emergency Cache"
     assert rec_by_code["01088"].pt_name == "Estoque de Emergência"
+
+
+
+def test_repository_auto_upgrades_legacy_monolingual_cache(tmp_path: Path) -> None:
+    """When an existing local cards.json lacks pt_name, repository auto-upgrades to bilingual catalog."""
+    target_file = tmp_path / "cards.json"
+    legacy_payload = [
+        {"code": "01020", "name": "Machete", "real_name": "Machete", "xp": 0, "type_code": "asset", "pack_code": "core"},
+    ]
+    import json
+    target_file.write_text(json.dumps(legacy_payload), encoding="utf-8")
+
+    en_cards = [
+        {"code": "01020", "name": "Machete", "real_name": "Machete", "xp": 0, "type_code": "asset", "pack_code": "core"},
+        {"code": "02153", "name": "Hypnotic Gaze", "real_name": "Hypnotic Gaze", "xp": 0, "type_code": "event", "pack_code": "tece"},
+    ]
+    pt_cards = [
+        {"code": "01020", "name": "Facão", "subname": None},
+        {"code": "02153", "name": "Olhar Hipnótico", "subname": None},
+    ]
+
+    def mock_get(url: str, timeout: float) -> Any:
+        if "pt.arkhamdb.com" in url:
+            return DummyHttpResponse(pt_cards)
+        return DummyHttpResponse(en_cards)
+
+    repo = ArkhamDBCardRepository(cards_path=target_file, http_get=mock_get)
+    records = repo.load_cards()
+
+    assert len(records) == 2
+    rec_by_code = {r.code: r for r in records}
+    assert rec_by_code["02153"].pt_name == "Olhar Hipnótico"
+    assert rec_by_code["01020"].pt_name == "Facão"
+
+
+def test_matcher_diana_stanley_hypnotic_gaze_and_bilingual_deck(cards_json_file: Path) -> None:
+    """Hypnotic Gaze ('Olhar Hipnótico') must match 02153 at 100% and be legal for Diana Stanley."""
+    repo = ArkhamDBCardRepository(cards_path=cards_json_file)
+    matcher = ArkhamFuzzyCardMatcher(repository=repo, similarity_threshold=65)
+    diana = matcher.match_investigator("Diana Stanley")
+
+    # Add Hypnotic Gaze directly into test fixture cache if not present
+    # In sample fixture, let's test matching Olhar Hipnótico
+    res_olhar = matcher.match_intent(
+        ExtractedCardIntent(nome="Olhar Hipnótico", nivel=0, quantidade=2),
+        investigator=diana,
+    )
+    assert res_olhar.matched is True
+    assert res_olhar.card_code == "02153"
+    assert res_olhar.official_name == "Hypnotic Gaze"
+    assert res_olhar.similarity_score == 100

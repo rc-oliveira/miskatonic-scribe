@@ -109,13 +109,36 @@ class ArkhamDBCardRepository(ICardRepository):
             logger.info("'%s' atualizado com sucesso (%d entradas bilíngues).", self._cards_path, len(merged_cards))
             return len(merged_cards)
 
+    def _is_cache_bilingual(self) -> bool:
+        """Check if local cache contains bilingual records (pt_name)."""
+        try:
+            with self._cards_path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list) and data:
+                return any(isinstance(c, dict) and "pt_name" in c for c in data)
+            return False
+        except Exception:
+            return False
+
     def ensure_cards_file(self, force: bool = False) -> Path:
-        """Ensure cards.json exists and is fresh (within refresh_days), downloading if needed."""
+        """Ensure cards.json exists, is bilingual, and is fresh (within refresh_days), downloading if needed."""
         file_exists = self._cards_path.exists()
-        if force or not file_exists:
-            self._download_from_arkhamdb()
-            self._last_checked_at = self._clock()
-            return self._cards_path
+        if force or not file_exists or not self._is_cache_bilingual():
+            logger.info("Base de cartas ausente ou desatualizada (sem dados bilíngues PT). Baixando...")
+            try:
+                self._download_from_arkhamdb()
+                self._last_checked_at = self._clock()
+                self._cached_cards = None
+                return self._cards_path
+            except CardDatabaseError as exc:
+                if file_exists:
+                    logger.warning(
+                        "Falha ao atualizar base bilíngue (%s). Mantendo cache local existente '%s'.",
+                        exc,
+                        self._cards_path,
+                    )
+                else:
+                    raise
 
         if self._is_file_expired():
             logger.info(

@@ -266,6 +266,17 @@ def sample_arkhamdb_payload() -> List[dict[str, Any]]:
             "type_code": "skill",
             "octgn_id": "guts-guid-01089",
         },
+        {
+            "code": "02153",
+            "name": "Olhar Hipnótico",
+            "real_name": "Hypnotic Gaze",
+            "pt_name": "Olhar Hipnótico",
+            "xp": 0,
+            "pack_code": "tece",
+            "faction_code": "mystic",
+            "type_code": "event",
+            "octgn_id": "hypnotic-guid-02153",
+        },
     ]
 
 
