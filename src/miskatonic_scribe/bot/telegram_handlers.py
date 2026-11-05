@@ -40,16 +40,19 @@ from miskatonic_scribe.domain.interfaces import (
 )
 from miskatonic_scribe.domain.models import (
     CardMatchResult,
+    DraftDeck,
+    ExtractedCardIntent,
     InvestigatorMatchResult,
     PipelineExecutionResult,
 )
+from miskatonic_scribe.services.draft_deck_parser import DraftDeckCommandParser
 from miskatonic_scribe.infrastructure.arkhamdb_deck_exporter import ArkhamDBDeckExporter
 from miskatonic_scribe.infrastructure.iam_managers import ConfigManager, UserManager
 from miskatonic_scribe.services.registration_pipeline import CardRegistrationPipeline
 
 logger = logging.getLogger(__name__)
 
-PendingBatchItem = Union[PipelineExecutionResult, List[CardMatchResult]]
+PendingBatchItem = Union[DraftDeck, PipelineExecutionResult, List[CardMatchResult]]
 
 
 def require_approved(func: Callable[..., Any]) -> Callable[..., Any]:
@@ -140,6 +143,7 @@ class MiskatonicTelegramBot:
         config_manager: Optional[ConfigManager] = None,
         card_repo: Optional[ICardRepository] = None,
         deck_exporter: Optional[ArkhamDBDeckExporter] = None,
+        draft_parser: Optional[DraftDeckCommandParser] = None,
         connect_timeout: float = 30.0,
         read_timeout: float = 60.0,
         download_retries: int = 3,
@@ -152,8 +156,15 @@ class MiskatonicTelegramBot:
         self._collection_repo = collection_repo
         self._user_manager = user_manager or UserManager.get_instance()
         self._config_manager = config_manager or ConfigManager.get_instance()
-        self._card_repo = card_repo
+        self._card_repo = card_repo or getattr(getattr(pipeline, "_matcher", None), "_repository", None)
         self._deck_exporter = deck_exporter or ArkhamDBDeckExporter()
+        matcher_obj = getattr(pipeline, "_matcher", None)
+        if draft_parser is not None:
+            self._draft_parser = draft_parser
+        elif self._card_repo is not None and matcher_obj is not None:
+            self._draft_parser = DraftDeckCommandParser(self._card_repo, matcher_obj)
+        else:
+            self._draft_parser = None
         self._connect_timeout = connect_timeout
         self._read_timeout = read_timeout
         self._download_retries = max(1, download_retries)
@@ -591,7 +602,7 @@ class MiskatonicTelegramBot:
             lines.append(f"• {match.format_telegram_line()}")
 
         lines.append(
-            "\n💡 _Envie uma mensagem de texto se quiser adicionar, remover ou trocar alguma carta antes de confirmar._"
+            "\n💡 _Comandos rápidos: 'inv <id>', '+1 <id_ou_nome>', '- <nome_ou_id>', 'swap <de> por <para>'_"
         )
         lines.append("Deseja confirmar o registro destas cartas?")
         return "\n".join(lines)
@@ -788,10 +799,16 @@ class MiskatonicTelegramBot:
         pending_batches: Dict[str, PendingBatchItem] = context.user_data.setdefault(
             "pending_batches", {}
         )
-        pending_batches[batch_id] = pipeline_result
+        draft = DraftDeck.from_pipeline_result(pipeline_result)
+        context.user_data["draft_deck"] = draft
+        pending_batches[batch_id] = draft
         context.user_data["active_batch_id"] = batch_id
 
-        response_text = self.format_confirmation_message(pipeline_result)
+        if self._draft_parser is not None:
+            response_text = self._draft_parser.format_draft_summary(draft)
+        else:
+            response_text = self.format_confirmation_message(pipeline_result)
+
         await status_msg.edit_text(
             response_text,
             parse_mode="Markdown",
@@ -819,6 +836,38 @@ class MiskatonicTelegramBot:
             "pending_batches", {}
         )
         active_batch_id: Optional[str] = context.user_data.get("active_batch_id")
+        draft: Optional[DraftDeck] = context.user_data.get("draft_deck")
+
+        # Se houver lote ativo em pending_batches que ainda não foi convertido para DraftDeck
+        if draft is None and active_batch_id and active_batch_id in pending_batches:
+            existing_peek = pending_batches[active_batch_id]
+            if isinstance(existing_peek, DraftDeck):
+                draft = existing_peek
+                context.user_data["draft_deck"] = draft
+            elif isinstance(existing_peek, PipelineExecutionResult):
+                draft = DraftDeck.from_pipeline_result(existing_peek)
+                context.user_data["draft_deck"] = draft
+                pending_batches[active_batch_id] = draft
+
+        # CASO 1: Há um DraftDeck pendente de confirmação -> PARSER DETERMINÍSTICO (SEM LLM)
+        if draft is not None and self._draft_parser is not None:
+            report = self._draft_parser.parse_and_apply(draft, raw_text)
+            if not active_batch_id:
+                active_batch_id = uuid.uuid4().hex[:10]
+                context.user_data["active_batch_id"] = active_batch_id
+            pending_batches[active_batch_id] = draft
+
+            response_text = self._draft_parser.format_draft_summary(
+                draft, feedbacks=report.feedbacks
+            )
+            await status_msg.edit_text(
+                response_text,
+                parse_mode="Markdown",
+                reply_markup=self._build_confirmation_keyboard(active_batch_id),
+            )
+            return
+
+        # CASO 2: Não há deck ativo aguardando confirmação -> Fluxo inicial via LLM
         context_investigator: Optional[InvestigatorMatchResult] = None
         if active_batch_id and active_batch_id in pending_batches:
             existing_peek = pending_batches[active_batch_id]
@@ -856,8 +905,10 @@ class MiskatonicTelegramBot:
                     extracted_intents=[m.intent for m in existing_item],
                     match_results=existing_item,
                 )
-            else:
+            elif isinstance(existing_item, PipelineExecutionResult):
                 existing_result = existing_item
+            else:
+                existing_result = delta_result
 
             final_result = CardRegistrationPipeline.merge_pending_result(
                 current=existing_result,
@@ -873,20 +924,54 @@ class MiskatonicTelegramBot:
             return
 
         new_batch_id = uuid.uuid4().hex[:10]
-        pending_batches[new_batch_id] = final_result
-        context.user_data["active_batch_id"] = new_batch_id
+        if self._draft_parser is not None:
+            draft = DraftDeck.from_pipeline_result(final_result)
+            context.user_data["draft_deck"] = draft
+            pending_batches[new_batch_id] = draft
+            response_text = self._draft_parser.format_draft_summary(draft)
+        else:
+            pending_batches[new_batch_id] = final_result
+            response_text = self.format_confirmation_message(final_result)
 
-        response_text = self.format_confirmation_message(final_result)
+        context.user_data["active_batch_id"] = new_batch_id
         await status_msg.edit_text(
             response_text,
             parse_mode="Markdown",
             reply_markup=self._build_confirmation_keyboard(new_batch_id),
         )
 
-    @staticmethod
     def _unpack_pending_item(
+        self,
         item: PendingBatchItem,
     ) -> tuple[List[CardMatchResult], Optional[InvestigatorMatchResult]]:
+        if isinstance(item, DraftDeck):
+            if self._draft_parser is not None:
+                return self._draft_parser.materialize_draft(item)
+            if self._card_repo is not None:
+                parser = DraftDeckCommandParser(self._card_repo, self._pipeline._matcher)
+                return parser.materialize_draft(item)
+            matches = [
+                CardMatchResult(
+                    intent=ExtractedCardIntent(nome=f"ID {code}", nivel=0, quantidade=qty),
+                    matched=True,
+                    card_code=code,
+                    official_name=f"Carta #{code}",
+                    matched_xp=0,
+                )
+                for code, qty in item.cards.items()
+            ]
+            inv = (
+                InvestigatorMatchResult(
+                    raw_name=item.investigator_code,
+                    matched=True,
+                    card_code=item.investigator_code,
+                    official_name=item.investigator_code,
+                )
+                if item.investigator_code
+                else None
+            )
+            return matches, inv
+
         if isinstance(item, PipelineExecutionResult):
             return item.match_results, item.investigator_match
         return list(item), None
@@ -910,6 +995,7 @@ class MiskatonicTelegramBot:
         pending_item = pending_batches.pop(batch_id, None)
         if context.user_data.get("active_batch_id") == batch_id:
             context.user_data.pop("active_batch_id", None)
+        context.user_data.pop("draft_deck", None)
 
         if pending_item is None:
             await query.edit_message_text(

@@ -764,3 +764,96 @@ def test_telegram_text_correction_merges_pending_batch_and_exports_dek(
     dek_bytes = doc_kwargs["document"].getvalue().decode("utf-8")
     assert "Diana Stanley" in dek_bytes
     assert "I've had worse…" in dek_bytes
+
+
+def test_telegram_deterministic_editing_never_calls_llm(
+    tmp_path: Path,
+    cards_json_file: Path,
+) -> None:
+    """Verify that text messages editing an active DraftDeck NEVER invoke LLM extraction."""
+    user_manager = _create_approved_user_manager(tmp_path, admin_id=ADMIN_USER_ID)
+    audio_storage = LocalAudioStorageManager(
+        config=AudioMaintenanceConfig(storage_dir=tmp_path / "audio", max_files=5, max_age_days=3)
+    )
+    repo = ArkhamDBCardRepository(cards_path=cards_json_file)
+    matcher = ArkhamFuzzyCardMatcher(repository=repo, similarity_threshold=65)
+    collection_repo = JsonUserCollectionRepository(db_path=tmp_path / "collections.json")
+
+    mock_extractor = MagicMock()
+    mock_extractor.extract_deck_payload.return_value = (
+        ExtractedDeckPayload(
+            transcricao="Deck da Diana com duas cópias de Shrivelling",
+            investigador="Diana Stanley",
+            cartas=[ExtractedCardIntent(nome="Shrivelling", nivel=0, quantidade=2)],
+            remover=[],
+        ),
+        "gemini-3.5-flash",
+    )
+
+    pipeline = CardRegistrationPipeline(
+        transcriber=StubTranscriber("Deck da Diana com duas cópias de Shrivelling"),
+        extractor=mock_extractor,
+        matcher=matcher,
+        transcription_mode="whisper",
+    )
+    bot = MiskatonicTelegramBot(
+        audio_storage=audio_storage,
+        pipeline=pipeline,
+        collection_repo=collection_repo,
+        user_manager=user_manager,
+        card_repo=repo,
+        use_thread_pool=False,
+    )
+
+    context = MagicMock()
+    context.user_data = {}
+
+    # 1. Áudio inicial
+    voice_update = MagicMock()
+    voice_update.effective_user.id = ADMIN_USER_ID
+    voice_update.callback_query = None
+    voice_update.message.audio = None
+    voice_update.message.voice.file_unique_id = "voiceDianaOnce"
+    telegram_file = MagicMock()
+    telegram_file.download_to_drive = AsyncMock(
+        side_effect=lambda custom_path, **kw: Path(custom_path).write_bytes(b"OggS")
+    )
+    voice_update.message.voice.get_file = AsyncMock(return_value=telegram_file)
+    voice_status = MagicMock()
+    voice_status.edit_text = AsyncMock()
+    voice_update.message.reply_text = AsyncMock(return_value=voice_status)
+
+    _drive_coroutine(bot.handle_voice_or_audio(voice_update, context))
+    assert mock_extractor.extract_deck_payload.call_count == 1
+
+    # 2. Primeira mensagem de edição: adicionar Machete por ID direto
+    text_update1 = MagicMock()
+    text_update1.effective_user.id = ADMIN_USER_ID
+    text_update1.callback_query = None
+    text_update1.message.text = "+2 01020"
+    text_status1 = MagicMock()
+    text_status1.edit_text = AsyncMock()
+    text_update1.message.reply_text = AsyncMock(return_value=text_status1)
+
+    _drive_coroutine(bot.handle_text_message(text_update1, context))
+    # LLM NÃO deve ser chamada novamente!
+    assert mock_extractor.extract_deck_payload.call_count == 1
+    assert "2x Machete" in text_status1.edit_text.call_args.args[0]
+
+    # 3. Segunda mensagem de edição: múltiplos comandos por linha
+    text_update2 = MagicMock()
+    text_update2.effective_user.id = ADMIN_USER_ID
+    text_update2.callback_query = None
+    text_update2.message.text = "-1 Shrivelling\n+1 02066"
+    text_status2 = MagicMock()
+    text_status2.edit_text = AsyncMock()
+    text_update2.message.reply_text = AsyncMock(return_value=text_status2)
+
+    _drive_coroutine(bot.handle_text_message(text_update2, context))
+    # Continua exatamente 1 chamada de LLM em todo o ciclo!
+    assert mock_extractor.extract_deck_payload.call_count == 1
+
+    final_msg = text_status2.edit_text.call_args.args[0]
+    assert "1x Shrivelling (Nível 0)" in final_msg
+    assert "1x Shrivelling (Nível 3)" in final_msg
+    assert "2x Machete (Nível 0)" in final_msg

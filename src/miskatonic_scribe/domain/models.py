@@ -212,3 +212,51 @@ class PipelineExecutionResult:
     match_results: List[CardMatchResult]
     investigator_match: Optional[InvestigatorMatchResult] = None
     removed_names: List[str] = field(default_factory=list)
+
+
+@dataclass
+class DraftDeck:
+    """Mutable in-memory draft state of a deck during post-audio confirmation and deterministic editing."""
+
+    investigator_code: Optional[str] = None
+    cards: dict[str, int] = field(default_factory=dict)
+    unmatched: list[str] = field(default_factory=list)
+    transcribed_text: str = ""
+
+    @classmethod
+    def from_pipeline_result(cls, result: PipelineExecutionResult) -> DraftDeck:
+        inv_code = (
+            result.investigator_match.card_code
+            if (result.investigator_match and result.investigator_match.matched)
+            else None
+        )
+        cards_dict: dict[str, int] = {}
+        unmatched_list: list[str] = []
+
+        if (
+            result.investigator_match
+            and not result.investigator_match.matched
+            and result.investigator_match.raw_name
+        ):
+            unmatched_list.append(f"Investigador: {result.investigator_match.raw_name}")
+
+        for match in result.match_results:
+            if match.matched and match.card_code:
+                cards_dict[match.card_code] = cards_dict.get(match.card_code, 0) + match.intent.quantidade
+            else:
+                unmatched_list.append(match.intent.nome)
+
+        return cls(
+            investigator_code=inv_code,
+            cards=cards_dict,
+            unmatched=unmatched_list,
+            transcribed_text=result.transcribed_text,
+        )
+
+    def total_cards(self) -> int:
+        """Return the total number of physical card copies currently in the draft."""
+        return sum(self.cards.values())
+
+    def total_unique_cards(self) -> int:
+        """Return the number of distinct card codes in the draft."""
+        return len(self.cards)
